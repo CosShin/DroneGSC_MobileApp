@@ -5,12 +5,14 @@ export interface DroneState {
   armed: boolean;
   flightMode: string;
   systemStatus: string;
+  stale: boolean;
 }
 
 const initialState: DroneState = {
   armed: false,
   flightMode: 'UNKNOWN',
   systemStatus: 'UNINIT',
+  stale: false,
 };
 
 export const droneSlice = createSlice({
@@ -26,10 +28,13 @@ export const droneSlice = createSlice({
     setSystemStatus: (state, action: PayloadAction<string>) => {
       state.systemStatus = action.payload;
     },
+    setDroneStale: (state, action: PayloadAction<boolean>) => {
+      state.stale = action.payload;
+    },
   },
 });
 
-export const { setArmed, setFlightMode, setSystemStatus } = droneSlice.actions;
+export const { setArmed, setFlightMode, setSystemStatus, setDroneStale } = droneSlice.actions;
 
 export const selectIsArmed = (state: RootState) => state.drone.armed;
 export const selectDroneMode = (state: RootState) => state.drone.flightMode;

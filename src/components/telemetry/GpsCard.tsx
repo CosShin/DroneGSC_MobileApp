@@ -21,7 +21,7 @@ export function GpsCard() {
   }
 
   const { satellites, hdop, gpsFix } = gps.value;
-  const isFixed = gpsFix > 2;
+  const isFixed = gpsFix !== null && gpsFix > 2;
 
   return (
     <View style={styles.card}>
@@ -38,11 +38,11 @@ export function GpsCard() {
         </View>
         <View style={styles.col}>
           <Text style={styles.label}>SATELLITES</Text>
-          <Text style={styles.value}>{satellites}</Text>
+          <Text style={styles.value}>{satellites ?? '--'}</Text>
         </View>
         <View style={styles.col}>
           <Text style={styles.label}>HDOP</Text>
-          <Text style={styles.value}>{hdop.toFixed(1)}</Text>
+          <Text style={styles.value}>{hdop === null ? '--' : hdop.toFixed(1)}</Text>
         </View>
       </View>
     </View>

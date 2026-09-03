@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TextInput, ScrollView } from 'react-native';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { selectPiGatewaySettings, updatePiGatewaySettings } from '../../store/settings/settingsSlice';
 import { selectConnectionStatus } from '../../store/connection/connectionSlice';
@@ -8,15 +8,6 @@ export function PiGatewaySettingsPanel() {
   const dispatch = useAppDispatch();
   const piGateway = useAppSelector(selectPiGatewaySettings);
   const status = useAppSelector(selectConnectionStatus);
-
-  // In a real app, this data would come from the gateway telemetry
-  const mockDiagnostics = {
-    version: '1.2.0',
-    cpu: 25,
-    ram: 45,
-    temp: 52,
-    disk: 30,
-  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -75,37 +66,27 @@ export function PiGatewaySettingsPanel() {
         <View style={styles.statsGrid}>
           <View style={styles.statBox}>
             <Text style={styles.statLabel}>VERSION</Text>
-            <Text style={styles.statValue}>{mockDiagnostics.version}</Text>
+            <Text style={styles.statValue}>--</Text>
           </View>
           <View style={styles.statBox}>
             <Text style={styles.statLabel}>CPU</Text>
-            <Text style={styles.statValue}>{mockDiagnostics.cpu}%</Text>
+            <Text style={styles.statValue}>--</Text>
           </View>
           <View style={styles.statBox}>
             <Text style={styles.statLabel}>RAM</Text>
-            <Text style={styles.statValue}>{mockDiagnostics.ram}%</Text>
+            <Text style={styles.statValue}>--</Text>
           </View>
           <View style={styles.statBox}>
             <Text style={styles.statLabel}>TEMP</Text>
-            <Text style={[styles.statValue, { color: mockDiagnostics.temp > 75 ? '#f00' : '#0f0' }]}>
-              {mockDiagnostics.temp}°C
-            </Text>
+            <Text style={styles.statValue}>--</Text>
           </View>
           <View style={styles.statBox}>
             <Text style={styles.statLabel}>DISK</Text>
-            <Text style={styles.statValue}>{mockDiagnostics.disk}%</Text>
+            <Text style={styles.statValue}>--</Text>
           </View>
         </View>
       </View>
 
-      <View style={styles.buttonRow}>
-        <TouchableOpacity style={styles.secondaryButton}>
-          <Text style={styles.secondaryButtonText}>REBOOT GATEWAY</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.primaryButton}>
-          <Text style={styles.primaryButtonText}>SAVE SETTINGS</Text>
-        </TouchableOpacity>
-      </View>
     </ScrollView>
   );
 }
@@ -221,33 +202,6 @@ const styles = StyleSheet.create({
   statValue: {
     color: '#fff',
     fontSize: 24,
-    fontWeight: 'bold',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: 20,
-    gap: 15,
-  },
-  secondaryButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#f00',
-  },
-  secondaryButtonText: {
-    color: '#f00',
-    fontWeight: 'bold',
-  },
-  primaryButton: {
-    backgroundColor: '#0066cc',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 6,
-  },
-  primaryButtonText: {
-    color: '#fff',
     fontWeight: 'bold',
   },
 });

@@ -1,7 +1,10 @@
 import { VideoSettings } from '../types/video';
+import { WEBRTC_DEFAULTS } from '../../video/VideoConfig';
 
 export const DEFAULT_VIDEO_CONFIG: VideoSettings = {
-  source: 'Disabled',
+  ...WEBRTC_DEFAULTS,
+  transport: 'WEBRTC',
+  source: 'WebRTC',
   
   udpListenAddress: '0.0.0.0',
   udpPort: 5600,

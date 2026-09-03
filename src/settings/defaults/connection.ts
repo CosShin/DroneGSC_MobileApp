@@ -1,15 +1,26 @@
 import { ConnectionConfig } from '../types/connection';
 
 export const DEFAULT_CONNECTION_CONFIG: ConnectionConfig = {
-  type: 'UDP',
+  type: 'WEBSOCKET',
+  networkProfile: 'LOCAL_WIFI',
   vehicleType: 'COPTER',
   autopilot: 'ARDUPILOT',
   protocol: 'MAVLINK_V2',
   udp: {
-    remoteHost: '192.168.1.12',
+    mode: 'CLIENT',
+    localAddress: '0.0.0.0',
+    remoteHost: '192.168.1.247',
     remotePort: 14550,
     localPort: 14550,
-    autoConnect: true,
+    autoConnect: false,
+    reconnect: true,
+    reconnectDelayMs: 1000,
+    connectionTimeoutMs: 5000,
+    heartbeatTimeoutMs: 3000,
+  },
+  websocket: {
+    url: 'ws://192.168.1.247:8765/mavlink',
+    autoConnect: false,
     reconnect: true,
     reconnectDelayMs: 1000,
     connectionTimeoutMs: 5000,
@@ -18,18 +29,26 @@ export const DEFAULT_CONNECTION_CONFIG: ConnectionConfig = {
   tcp: {
     host: '192.168.1.12',
     port: 5760,
+    connectTimeoutMs: 5000,
+    heartbeatTimeoutMs: 3000,
+    reconnectDelayMs: 1000,
     autoConnect: false,
     reconnect: true,
   },
   serial: {
     baudRate: 115200,
     port: 'COM_USB_1',
+    deviceId: null,
+    vendorId: null,
+    productId: null,
     autoConnect: false,
   },
   bluetooth: {
+    mode: 'CLASSIC',
     deviceName: 'HC-05-DRONE',
     deviceId: '00:14:03:05:5A:B1',
     baudRate: 57600,
+    autoConnect: false,
   },
   mock: {
     vehicleType: 'COPTER',

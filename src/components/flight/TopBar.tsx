@@ -7,6 +7,7 @@ import { selectMainViewMode, selectShowTelemetry, toggleMainViewMode, toggleTele
 import { MissionPlannerConnectBar } from './MissionPlannerConnectBar';
 import { safetyLayer } from '../../services/command/SafetyLayer';
 import { FlightMode } from '../../types/command';
+import { selectVehicleState } from '../../store/connection/connectionSlice';
 
 export function TopBar() {
   const insets = useSafeAreaInsets();
@@ -15,6 +16,7 @@ export function TopBar() {
 
   const mode = useAppSelector(selectDroneMode);
   const isArmed = useAppSelector(selectIsArmed);
+  const vehicleState = useAppSelector(selectVehicleState);
   const mainViewMode = useAppSelector(selectMainViewMode);
   const showTelemetry = useAppSelector(selectShowTelemetry);
 
@@ -79,6 +81,7 @@ export function TopBar() {
         <TouchableOpacity 
           style={[styles.pill, styles.pillMode]}
           onPress={() => setShowModeMenu(!showModeMenu)}
+          disabled={vehicleState !== 'CONNECTED'}
           activeOpacity={0.7}
         >
           <Text style={styles.pillLabel}>MODE</Text>
@@ -89,7 +92,7 @@ export function TopBar() {
         {/* Arm Status Pill */}
         <View style={[styles.pill, isArmed ? styles.pillArmed : styles.pillDisarmed]}>
           <Text style={[styles.armText, isArmed ? styles.armed : styles.disarmed]}>
-            {isArmed ? 'ARMED' : 'DISARMED'}
+            {vehicleState === 'NO_VEHICLE' ? 'UNKNOWN' : isArmed ? 'ARMED' : 'DISARMED'}
           </Text>
         </View>
       </View>
@@ -101,12 +104,6 @@ export function TopBar() {
 
       {/* Pure JS Flight Mode Dropdown Menu (No Native iOS Modal = 0 Crashes) */}
       {showModeMenu && (
-        <>
-          <TouchableOpacity 
-            style={styles.pureBackdrop}
-            activeOpacity={1}
-            onPress={() => setShowModeMenu(false)}
-          />
           <View style={styles.modeMenuContainer}>
             <View style={styles.modeMenuHeader}>
               <Text style={styles.modeMenuHeaderTitle}>SELECT FLIGHT MODE</Text>
@@ -133,7 +130,6 @@ export function TopBar() {
               })}
             </ScrollView>
           </View>
-        </>
       )}
     </View>
   );
@@ -270,15 +266,6 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     fontSize: 9,
     marginLeft: 3,
-  },
-  pureBackdrop: {
-    position: 'absolute',
-    top: 0,
-    left: -500,
-    right: -500,
-    height: 1200,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    zIndex: 900,
   },
   modeMenuContainer: {
     position: 'absolute',

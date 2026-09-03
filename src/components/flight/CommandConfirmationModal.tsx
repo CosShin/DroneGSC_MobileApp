@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput } from 'react-native';
+import { useAppSelector } from '../../store/hooks';
+import { selectHomePosition, selectHomeStatus } from '../../store/home/homeSlice';
+import { selectGps } from '../../store/telemetry/telemetrySlice';
+import { calculateDistanceMeters, formatDistance } from '../../utils/geographic';
 import { DroneCommand } from '../../types/command';
 
 interface Props {
@@ -11,8 +15,16 @@ interface Props {
 
 export function CommandConfirmationModal({ visible, command, onConfirm, onCancel }: Props) {
   const [altitude, setAltitude] = useState('5.0');
+  const home = useAppSelector(selectHomePosition);
+  const homeStatus = useAppSelector(selectHomeStatus);
+  const gps = useAppSelector(selectGps);
 
   if (!visible || !command) return null;
+
+  const isHomeSet = homeStatus === 'SET' && home != null;
+  const homeDist = isHomeSet && gps?.value.latitude != null && gps?.value.longitude != null
+    ? calculateDistanceMeters(gps.value.latitude, gps.value.longitude, home.latitude, home.longitude)
+    : null;
 
   const handleConfirm = () => {
     if (command.type === 'TAKEOFF') {
@@ -48,6 +60,29 @@ export function CommandConfirmationModal({ visible, command, onConfirm, onCancel
               keyboardType="numeric"
               selectTextOnFocus
             />
+          </View>
+        )}
+
+        {command.type === 'RTL' && (
+          <View style={styles.rtlContainer}>
+            <Text style={styles.rtlLabel}>TARGET DESTINATION:</Text>
+            {isHomeSet ? (
+              <View style={styles.rtlDetails}>
+                <Text style={styles.rtlHomeCoord}>
+                  Home: {home.latitude.toFixed(5)}°, {home.longitude.toFixed(5)}°
+                </Text>
+                <Text style={styles.rtlHomeDist}>
+                  Distance: {formatDistance(homeDist)}
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.rtlHomeUnknown}>
+                Autopilot Home (position not currently available in GCS)
+              </Text>
+            )}
+            <Text style={styles.rtlWarning}>
+              Aircraft will climb to RTL altitude and return to launch position.
+            </Text>
           </View>
         )}
 
@@ -170,5 +205,44 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     fontSize: 11,
     letterSpacing: 0.5,
+  },
+  rtlContainer: {
+    backgroundColor: 'rgba(30, 41, 59, 0.7)',
+    borderRadius: 6,
+    padding: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+    gap: 4,
+  },
+  rtlLabel: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#94a3b8',
+    letterSpacing: 0.5,
+  },
+  rtlDetails: {
+    gap: 2,
+  },
+  rtlHomeCoord: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#38bdf8',
+  },
+  rtlHomeDist: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#f8fafc',
+  },
+  rtlHomeUnknown: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#f59e0b',
+  },
+  rtlWarning: {
+    fontSize: 9.5,
+    color: '#94a3b8',
+    marginTop: 4,
+    lineHeight: 13,
   },
 });

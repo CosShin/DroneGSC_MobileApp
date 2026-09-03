@@ -14,7 +14,8 @@ export class InputMapper {
     
     // Right stick: X = Roll, Y = Pitch
     const rollRaw = rightStick.x;
-    const pitchRaw = rightStick.y;
+    // Screen Y is positive downward; MAVLink MANUAL_CONTROL pitch is positive forward.
+    const pitchRaw = -rightStick.y;
     
     const {
       JOYSTICK_DEADZONE,
@@ -27,9 +28,7 @@ export class InputMapper {
     const pitch = processAxis(pitchRaw, JOYSTICK_DEADZONE, JOYSTICK_EXPO, JOYSTICK_SENSITIVITY);
     const yaw = processAxis(yawRaw, JOYSTICK_DEADZONE, JOYSTICK_EXPO, JOYSTICK_SENSITIVITY);
     
-    // Throttle is slightly different: we process it, but usually throttle doesn't use the same
-    // auto-centering expo. However, for a mock drone with standard RC, we can still process the raw
-    // signal to give it deadzone, then map to 0-1.
+    // Throttle maps bottom-to-top onto 0..1.
     const throttleProcessed = processAxis(throttleRaw, JOYSTICK_DEADZONE, JOYSTICK_EXPO, JOYSTICK_SENSITIVITY);
     const throttle = mapThrottle(throttleProcessed);
     

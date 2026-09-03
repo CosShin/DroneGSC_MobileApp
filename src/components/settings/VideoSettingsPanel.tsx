@@ -36,14 +36,17 @@ export function VideoSettingsPanel() {
           <View style={styles.buttonGroup}>
             {[
               { id: 'Disabled', label: 'Disabled (HUD Horizon)' },
-              { id: 'MPEG-TS', label: 'FPV Demo Stream' },
+              { id: 'WebRTC', label: 'WebRTC (Low latency)' },
               { id: 'RTSP', label: 'RTSP Stream' },
-              { id: 'UDP H.264', label: 'UDP H.264' }
+              { id: 'UDP H.264', label: 'RTP H.264 (Pi)' }
             ].map((src) => (
               <TouchableOpacity
                 key={src.id}
                 style={[styles.groupButton, video.source === src.id && styles.groupButtonActive]}
-                onPress={() => dispatch(updateVideoSettings({ source: src.id as any }))}
+                onPress={() => dispatch(updateVideoSettings({
+                  source: src.id as any,
+                  transport: src.id === 'Disabled' ? 'NONE' : src.id === 'RTSP' ? 'RTSP' : src.id === 'UDP H.264' ? 'UDP_H264' : 'WEBRTC',
+                }))}
               >
                 <Text numberOfLines={1} style={[styles.groupButtonText, video.source === src.id && styles.groupButtonTextActive]}>
                   {src.label}
@@ -62,16 +65,13 @@ export function VideoSettingsPanel() {
         )}
 
         {video.source === 'UDP H.264' && (
-          <View style={styles.row}>
-            <View style={[styles.inputRow, { flex: 1, marginRight: 10 }]}>
-              <Text style={styles.label}>Listen Address</Text>
-              <TextInput 
-                style={styles.input}
-                value={video.udpListenAddress}
-                onChangeText={(text) => dispatch(updateVideoSettings({ udpListenAddress: text }))}
-              />
+          <View>
+            <View style={styles.card}>
+              <Text style={styles.infoText}>
+                RTP/H.264 payload 96 receiver: rtp://@:{video.udpPort}. Configure the Pi to send UDP video to this phone's IP, not to the Pi IP. Only one player can own this port.
+              </Text>
             </View>
-            <View style={[styles.inputRow, { flex: 1 }]}>
+            <View style={styles.inputRow}>
               <Text style={styles.label}>UDP Port</Text>
               <TextInput 
                 style={styles.input}

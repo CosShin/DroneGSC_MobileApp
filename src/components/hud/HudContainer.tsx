@@ -2,40 +2,38 @@ import React, { useMemo } from 'react';
 import { View, StyleSheet, Text, Animated, Dimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppSelector } from '../../store/hooks';
-import { selectAttitude, selectGps, selectVelocity, selectBattery } from '../../store/telemetry/telemetrySlice';
+import { 
+  selectRoll, selectPitch, selectYaw, selectAltitude, 
+  selectGroundSpeed, selectSatellites, selectBatteryPercentage, selectHeading 
+} from '../../store/telemetry/telemetrySlice';
 import { selectDroneMode, selectIsArmed } from '../../store/drone/droneSlice';
 import { selectVideoSettings } from '../../store/settings/settingsSlice';
 import { VideoStream } from '../video/VideoStream';
+import { selectVehicleState } from '../../store/connection/connectionSlice';
+import { useIsFocused } from '@react-navigation/native';
 
 const PITCH_SCALE = 6; // Pixels per degree of pitch
 const DEG_TO_RAD = Math.PI / 180;
 
 export function HudContainer() {
+  const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
-  const attitude = useAppSelector(selectAttitude);
-  const gps = useAppSelector(selectGps);
-  const velocity = useAppSelector(selectVelocity);
-  const battery = useAppSelector(selectBattery);
+  
+  const roll = useAppSelector(selectRoll);
+  const pitch = useAppSelector(selectPitch);
+  const yaw = useAppSelector(selectYaw);
+  const altitude = useAppSelector(selectAltitude);
+  const speed = useAppSelector(selectGroundSpeed);
+  const satellites = useAppSelector(selectSatellites);
+  const percentage = useAppSelector(selectBatteryPercentage);
+  const heading = useAppSelector(selectHeading);
+
   const mode = useAppSelector(selectDroneMode);
   const isArmed = useAppSelector(selectIsArmed);
+  const vehicleState = useAppSelector(selectVehicleState);
   const videoSettings = useAppSelector(selectVideoSettings);
 
-  const isVideoActive = videoSettings.source !== 'Disabled';
-
-  const roll = attitude?.value.roll || 0;
-  const pitch = attitude?.value.pitch || 0;
-  const yaw = attitude?.value.yaw || 0;
-  const altitude = gps?.value.altitude || 0;
-  const speed = velocity?.value.groundSpeed || 0;
-  const satellites = gps?.value.satellites || 0;
-  const gpsFix = gps?.value.gpsFix || 0;
-
-  const voltage = battery?.value.voltage || 0;
-  const current = battery?.value.current || 0;
-  const percentage = battery?.value.percentage || 0;
-
-  // Normalized heading string (0 - 359)
-  const heading = ((Math.round(yaw) % 360) + 360) % 360;
+  const isVideoActive = videoSettings.transport === 'WEBRTC' && isFocused;
 
   // Roll arc angle ticks
   const rollTicks = useMemo(() => [
@@ -86,7 +84,7 @@ export function HudContainer() {
       </Animated.View>
 
       {/* Optional Live Video Feed */}
-      {isVideoActive && <VideoStream />}
+      {isVideoActive && <VideoStream enabled={isFocused} />}
 
       {/* 2. Pitch Ladder (Rotates with Roll, Moves with Pitch) */}
       <View style={styles.pitchLadderWrapper} pointerEvents="none">
@@ -116,7 +114,7 @@ export function HudContainer() {
 
           {/* Central Arming Status Text on HUD */}
           <Text style={[styles.armingStatusText, isArmed ? styles.armedText : styles.disarmedText]}>
-            {isArmed ? 'ARMED' : 'DISARMED'}
+            {vehicleState === 'NO_VEHICLE' ? 'NO VEHICLE' : vehicleState === 'STALE' ? 'STALE' : isArmed ? 'ARMED' : 'DISARMED'}
           </Text>
         </Animated.View>
       </View>
@@ -188,15 +186,15 @@ export function HudContainer() {
 
           {/* Current Speed Badge Arrow */}
           <View style={styles.speedPointerBadge}>
-            <Text style={styles.speedPointerText}>{speed.toFixed(0)}m/s</Text>
+            <Text style={styles.speedPointerText}>{speed === null ? '--' : `${speed.toFixed(0)}m/s`}</Text>
             <View style={styles.pointerArrowRight} />
           </View>
         </View>
 
         {/* Bottom Speed Text */}
         <View style={styles.speedFooter}>
-          <Text numberOfLines={1} style={styles.speedFooterText}>AS 0.0m/s</Text>
-          <Text numberOfLines={1} style={styles.speedFooterText}>GS {speed.toFixed(1)}m/s</Text>
+          <Text numberOfLines={1} style={styles.speedFooterText}>AS --</Text>
+          <Text numberOfLines={1} style={styles.speedFooterText}>GS {speed === null ? '--' : `${speed.toFixed(1)}m/s`}</Text>
         </View>
       </View>
 
@@ -210,7 +208,7 @@ export function HudContainer() {
       >
         {/* Top Flight Time & Battery */}
         <View style={styles.altTopHeader}>
-          <Text numberOfLines={1} style={styles.flightTimeText}>00:00:00</Text>
+          <Text numberOfLines={1} style={styles.flightTimeText}>--:--:--</Text>
         </View>
 
         {/* Altitude Scale Container */}
@@ -218,7 +216,7 @@ export function HudContainer() {
           {/* Current Altitude Badge Arrow */}
           <View style={styles.altPointerBadge}>
             <View style={styles.pointerArrowLeft} />
-            <Text style={styles.altPointerText}>{altitude.toFixed(0)} m</Text>
+            <Text style={styles.altPointerText}>{altitude === null ? '--' : `${altitude.toFixed(0)} m`}</Text>
           </View>
 
           {[10, 5, 0, -5, -10].map((v) => (
@@ -232,7 +230,7 @@ export function HudContainer() {
         {/* Bottom Mode & Target Alt */}
         <View style={styles.altFooter}>
           <Text numberOfLines={1} style={styles.modeStatusText}>{mode || 'Unknown'}</Text>
-          <Text numberOfLines={1} style={styles.targetAltText}>{altitude.toFixed(0)}m&gt;0</Text>
+          <Text numberOfLines={1} style={styles.targetAltText}>{altitude === null ? '--' : `${altitude.toFixed(0)}m`}</Text>
         </View>
       </View>
 
@@ -243,12 +241,12 @@ export function HudContainer() {
           {/* GPS Badge */}
           <View style={styles.bottomStatBadge}>
             <Text style={styles.bottomStatLabel}>GPS</Text>
-            <Text style={styles.bottomStatValue}>{satellites}</Text>
+            <Text style={styles.bottomStatValue}>{satellites ?? '--'}</Text>
           </View>
 
           {/* Heading Readout Pill */}
           <View style={styles.headingPill}>
-            <Text style={styles.headingPillText}>{heading.toString().padStart(3, '0')}°</Text>
+            <Text style={styles.headingPillText}>{heading === null ? '---' : `${heading.toString().padStart(3, '0')}°`}</Text>
           </View>
 
           {/* Battery Badge */}
@@ -256,9 +254,9 @@ export function HudContainer() {
             <Text style={styles.bottomStatLabel}>BAT</Text>
             <Text style={[
               styles.bottomStatValue, 
-              { color: percentage > 50 ? '#22c55e' : percentage > 20 ? '#f59e0b' : '#ef4444' }
+              { color: percentage === null ? '#94a3b8' : percentage > 50 ? '#22c55e' : percentage > 20 ? '#f59e0b' : '#ef4444' }
             ]}>
-              {Math.round(percentage)}%
+              {percentage === null ? '--' : `${Math.round(percentage)}%`}
             </Text>
           </View>
         </View>

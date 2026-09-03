@@ -9,4 +9,6 @@ export interface MavlinkSettings {
   forwardingEnabled: boolean;
   targetSystem: number | 'AUTO';
   targetComponent: number | 'AUTO';
+  signingPolicy: 'DISABLED' | 'SIGN_OUTGOING' | 'REQUIRE_VALID';
+  signingLinkId: number;
 }

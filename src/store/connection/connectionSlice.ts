@@ -1,6 +1,7 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { RootState } from '../index';
 import { ConnectionType, VehicleType, AutopilotType } from '../../settings/types/connection';
+import { ConnectionPhase } from '../../services/connection/ConnectionStateMachine';
 
 export type ConnectionStatus = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
 
@@ -17,15 +18,25 @@ export interface ConnectionState {
   bytesReceived: number;
   bytesSent: number;
   packetsPerSec: number;
+  txPacketsPerSec: number;
+  rxBytesPerSec: number;
+  txBytesPerSec: number;
+  mavlinkVersion: 1 | 2 | null;
   error: string | null;
+  phase: ConnectionPhase;
+  networkState: 'DISCONNECTED' | 'BOUND' | 'ERROR';
+  mavlinkState: 'IDLE' | 'WAITING_HEARTBEAT' | 'ACTIVE' | 'HEARTBEAT_LOST';
+  vehicleState: 'NO_VEHICLE' | 'CONNECTED' | 'STALE';
+  packetsLost: number;
+  sessionId?: string | null;
 }
 
 const initialState: ConnectionState = {
   status: 'DISCONNECTED',
-  activeType: 'UDP',
-  activePortInfo: 'UDP: 14550',
-  vehicleName: 'ArduCopter V4.5.1',
-  vehicleType: 'COPTER',
+  activeType: 'WEBSOCKET',
+  activePortInfo: 'ws://192.168.1.247:8765/mavlink',
+  vehicleName: 'NO VEHICLE',
+  vehicleType: 'GENERIC',
   autopilot: 'ARDUPILOT',
   latencyMs: null,
   lastHeartbeat: null,
@@ -33,7 +44,16 @@ const initialState: ConnectionState = {
   bytesReceived: 0,
   bytesSent: 0,
   packetsPerSec: 0,
+  txPacketsPerSec: 0,
+  rxBytesPerSec: 0,
+  txBytesPerSec: 0,
+  mavlinkVersion: null,
   error: null,
+  phase: 'IDLE',
+  networkState: 'DISCONNECTED',
+  mavlinkState: 'IDLE',
+  vehicleState: 'NO_VEHICLE',
+  packetsLost: 0,
 };
 
 export const connectionSlice = createSlice({
@@ -64,10 +84,38 @@ export const connectionSlice = createSlice({
     setLatency: (state, action: PayloadAction<number | null>) => {
       state.latencyMs = action.payload;
     },
-    updateTrafficStats: (state, action: PayloadAction<{ bytesRx: number; bytesTx: number; pps: number }>) => {
+    updateTrafficStats: (state, action: PayloadAction<{
+      bytesRx: number;
+      bytesTx: number;
+      pps: number;
+      txPps?: number;
+      rxBytesPerSec?: number;
+      txBytesPerSec?: number;
+      mavlinkVersion?: 1 | 2 | null;
+    }>) => {
       state.bytesReceived = action.payload.bytesRx;
       state.bytesSent = action.payload.bytesTx;
       state.packetsPerSec = action.payload.pps;
+      state.txPacketsPerSec = action.payload.txPps ?? state.txPacketsPerSec;
+      state.rxBytesPerSec = action.payload.rxBytesPerSec ?? state.rxBytesPerSec;
+      state.txBytesPerSec = action.payload.txBytesPerSec ?? state.txBytesPerSec;
+      if (action.payload.mavlinkVersion !== undefined) state.mavlinkVersion = action.payload.mavlinkVersion;
+    },
+    setLinkState: (state, action: PayloadAction<{
+      phase: ConnectionPhase;
+      network: ConnectionState['networkState'];
+      mavlink: ConnectionState['mavlinkState'];
+      vehicle: ConnectionState['vehicleState'];
+      error: string | null;
+    }>) => {
+      state.phase = action.payload.phase;
+      state.networkState = action.payload.network;
+      state.mavlinkState = action.payload.mavlink;
+      state.vehicleState = action.payload.vehicle;
+      state.error = action.payload.error;
+    },
+    setPacketsLost: (state, action: PayloadAction<number>) => {
+      state.packetsLost = action.payload;
     },
   },
 });
@@ -80,7 +128,9 @@ export const {
   setLastPacket, 
   setError, 
   setLatency,
-  updateTrafficStats
+  updateTrafficStats,
+  setLinkState,
+  setPacketsLost,
 } = connectionSlice.actions;
 
 export const selectConnectionStatus = (state: RootState) => state.connection.status;
@@ -92,7 +142,15 @@ export const selectVehicleType = (state: RootState) => state.connection.vehicleT
 export const selectAutopilot = (state: RootState) => state.connection.autopilot;
 export const selectBytesReceived = (state: RootState) => state.connection.bytesReceived;
 export const selectPacketsPerSec = (state: RootState) => state.connection.packetsPerSec;
+export const selectTxPacketsPerSec = (state: RootState) => state.connection.txPacketsPerSec;
+export const selectRxBytesPerSec = (state: RootState) => state.connection.rxBytesPerSec;
+export const selectTxBytesPerSec = (state: RootState) => state.connection.txBytesPerSec;
+export const selectMavlinkVersion = (state: RootState) => state.connection.mavlinkVersion;
 export const selectLatencyMs = (state: RootState) => state.connection.latencyMs;
 export const selectLastHeartbeat = (state: RootState) => state.connection.lastHeartbeat;
+export const selectNetworkState = (state: RootState) => state.connection.networkState;
+export const selectMavlinkState = (state: RootState) => state.connection.mavlinkState;
+export const selectVehicleState = (state: RootState) => state.connection.vehicleState;
+export const selectConnectionPhase = (state: RootState) => state.connection.phase;
 
 export default connectionSlice.reducer;

@@ -10,5 +10,7 @@ export const DEFAULT_MAVLINK_CONFIG: MavlinkSettings = {
   acceptMavlink2: true,
   forwardingEnabled: false,
   targetSystem: 'AUTO',
-  targetComponent: 'AUTO'
+  targetComponent: 'AUTO',
+  signingPolicy: 'DISABLED',
+  signingLinkId: 0,
 };

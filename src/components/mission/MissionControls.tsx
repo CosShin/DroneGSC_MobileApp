@@ -2,23 +2,15 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import { 
-  selectWaypoints, 
   selectSyncStatus, 
   selectSyncProgress, 
-  clearMission, 
-  uploadMission 
+  clearMission
 } from '../../store/mission/missionSlice';
 
 export function MissionControls() {
   const dispatch = useAppDispatch();
-  const waypoints = useAppSelector(selectWaypoints);
   const syncStatus = useAppSelector(selectSyncStatus);
   const syncProgress = useAppSelector(selectSyncProgress);
-
-  const handleUpload = () => {
-    if (waypoints.length === 0) return;
-    dispatch(uploadMission());
-  };
 
   const handleClear = () => {
     dispatch(clearMission());
@@ -62,15 +54,11 @@ export function MissionControls() {
           style={[
             styles.btn, 
             styles.uploadBtn, 
-            (syncStatus === 'SYNCING' || waypoints.length === 0) && styles.btnDisabled,
-            syncStatus === 'SYNCED' && styles.syncedBtn
+            styles.btnDisabled
           ]} 
-          onPress={handleUpload}
-          disabled={syncStatus === 'SYNCING' || waypoints.length === 0}
+          disabled
         >
-          <Text style={styles.btnText}>
-            {syncStatus === 'SYNCED' ? 'UPLOADED' : 'UPLOAD TO DRONE'}
-          </Text>
+          <Text style={styles.btnText}>UPLOAD UNAVAILABLE</Text>
         </TouchableOpacity>
 
         {/* START MISSION */}
@@ -155,9 +143,6 @@ const styles = StyleSheet.create({
   },
   uploadBtn: {
     backgroundColor: '#ffaa00',
-  },
-  syncedBtn: {
-    backgroundColor: '#00aa00',
   },
   startBtn: {
     backgroundColor: '#00ddff',

@@ -9,7 +9,16 @@ export enum FlightMode {
   LAND = 'LAND',
 }
 
-export type CommandType = 'ARM' | 'DISARM' | 'TAKEOFF' | 'LAND' | 'RTL' | 'SET_MODE';
+export type CommandType = 'ARM' | 'DISARM' | 'TAKEOFF' | 'LAND' | 'RTL' | 'SET_MODE' | 'SET_HOME';
+export type CommandExecutionStatus =
+  | 'IDLE'
+  | 'PENDING'
+  | 'IN_PROGRESS'
+  | 'ACCEPTED'
+  | 'DENIED'
+  | 'FAILED'
+  | 'UNSUPPORTED'
+  | 'TIMEOUT';
 
 export interface ArmCommand {
   type: 'ARM';
@@ -41,17 +50,33 @@ export interface SetModeCommand {
   };
 }
 
+export interface SetHomeCommand {
+  type: 'SET_HOME';
+  payload: {
+    useCurrent: boolean;
+    latitude?: number;
+    longitude?: number;
+    altitude?: number;
+  };
+}
+
 export type DroneCommand =
   | ArmCommand
   | DisarmCommand
   | TakeoffCommand
   | LandCommand
   | RtlCommand
-  | SetModeCommand;
+  | SetModeCommand
+  | SetHomeCommand;
 
 export interface CommandResult {
   success: boolean;
   command: CommandType;
   timestamp: number;
+  status?: CommandExecutionStatus;
+  mavCommand?: number;
+  mavResult?: number;
+  sentAt?: number;
+  ackAt?: number;
   error?: string;
 }

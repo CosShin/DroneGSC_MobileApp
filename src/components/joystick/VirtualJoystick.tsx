@@ -1,6 +1,11 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { View, StyleSheet, Text, Animated } from 'react-native';
-import { PanGestureHandler, PanGestureHandlerGestureEvent, State } from 'react-native-gesture-handler';
+import React from 'react';
+import { Animated, StyleSheet, Text, View } from 'react-native';
+import {
+  PanGestureHandler,
+  PanGestureHandlerGestureEvent,
+  PanGestureHandlerStateChangeEvent,
+  State,
+} from 'react-native-gesture-handler';
 
 interface Props {
   size?: number;
@@ -8,211 +13,146 @@ interface Props {
   onUpdate: (x: number, y: number, active: boolean) => void;
 }
 
-export function VirtualJoystick({ size = 120, mode = 'PITCH_ROLL', onUpdate }: Props) {
-  const [isEngaged, setIsEngaged] = useState(false);
-  const [valX, setValX] = useState(0);
-  const [valY, setValY] = useState(0);
-  
-  // Max radius the stick can travel
-  const radius = size / 2;
-  const stickRadius = size / 3.6;
-  const maxTravel = radius - stickRadius;
+export function VirtualJoystick({ size = 118, mode = 'PITCH_ROLL', onUpdate }: Props) {
+  const pan = React.useRef(new Animated.ValueXY()).current;
+  const onUpdateRef = React.useRef(onUpdate);
+  const position = React.useRef({ x: 0, y: 0 });
+  const [isInteracting, setIsInteracting] = React.useState(false);
+  const active = React.useRef(false);
+  const knobRadius = Math.max(24, size * 0.19);
+  const maxTravel = Math.max(1, size * 0.5 - knobRadius - 9);
 
-  const pan = useRef(new Animated.ValueXY()).current;
-  const activeRef = useRef(false);
+  React.useEffect(() => {
+    onUpdateRef.current = onUpdate;
+  }, [onUpdate]);
 
-  const notifyUpdate = (dx: number, dy: number, active: boolean) => {
-    // Normalize to [-1, 1]
-    let nx = dx / maxTravel;
-    let ny = dy / maxTravel;
-    
-    nx = Math.max(-1, Math.min(1, nx));
-    ny = Math.max(-1, Math.min(1, ny));
-    
-    setValX(nx);
-    setValY(ny);
-    onUpdate(nx, ny, active);
-  };
+  const update = React.useCallback((dx: number, dy: number, isActive: boolean) => {
+    onUpdateRef.current(
+      Math.max(-1, Math.min(1, dx / maxTravel)),
+      Math.max(-1, Math.min(1, dy / maxTravel)),
+      isActive
+    );
+  }, [maxTravel]);
 
-  const handleGestureEvent = (e: PanGestureHandlerGestureEvent) => {
-    let dx = e.nativeEvent.translationX;
-    let dy = e.nativeEvent.translationY;
-    
+  const onGesture = (event: PanGestureHandlerGestureEvent) => {
+    let dx = event.nativeEvent.translationX;
+    let dy = event.nativeEvent.translationY;
     const distance = Math.sqrt(dx * dx + dy * dy);
+
     if (distance > maxTravel) {
       dx = (dx / distance) * maxTravel;
       dy = (dy / distance) * maxTravel;
     }
 
     pan.setValue({ x: dx, y: dy });
-    notifyUpdate(dx, dy, true);
+    position.current = { x: dx, y: dy };
+    update(dx, dy, true);
   };
 
-  const handleStateChange = (e: PanGestureHandlerGestureEvent) => {
-    if (e.nativeEvent.state === State.BEGAN) {
-      activeRef.current = true;
-      setIsEngaged(true);
-    } else if (e.nativeEvent.state === State.END || e.nativeEvent.state === State.CANCELLED || e.nativeEvent.state === State.FAILED) {
-      activeRef.current = false;
-      setIsEngaged(false);
-      
-      // Spring back to center
-      Animated.spring(pan, {
-        toValue: { x: 0, y: 0 },
-        useNativeDriver: false,
-        friction: 6,
-        tension: 100,
-      }).start();
-      
-      setValX(0);
-      setValY(0);
-      notifyUpdate(0, 0, false);
+  const release = React.useCallback(() => {
+    if (!active.current) return;
+    active.current = false;
+    setIsInteracting(false);
+    position.current = { x: 0, y: 0 };
+    Animated.spring(pan, {
+      toValue: { x: 0, y: 0 },
+      useNativeDriver: true,
+      speed: 28,
+      bounciness: 4,
+    }).start();
+    update(0, 0, false);
+  }, [pan, update]);
+
+  const onState = (event: PanGestureHandlerStateChangeEvent) => {
+    const state = event.nativeEvent.state;
+
+    if (state === State.BEGAN) {
+      pan.stopAnimation();
+      pan.setValue({ x: 0, y: 0 });
+      position.current = { x: 0, y: 0 };
+      active.current = true;
+      setIsInteracting(true);
+      update(0, 0, true);
+    }
+
+    if (state === State.END || state === State.CANCELLED || state === State.FAILED) {
+      release();
     }
   };
 
-  // Cleanup on unmount
-  useEffect(() => {
+  React.useEffect(() => {
+    if (!isInteracting) return;
+    // Gesture-handler may not emit MOVE events while a finger is held still.
+    // Refresh the processor timestamp so an intentional held command remains live.
+    const keepAlive = setInterval(() => {
+      if (active.current) update(position.current.x, position.current.y, true);
+    }, 100);
+    return () => clearInterval(keepAlive);
+  }, [isInteracting, update]);
+
+  React.useEffect(() => {
     return () => {
-      if (activeRef.current) {
-        onUpdate(0, 0, false);
-      }
+      if (active.current) onUpdateRef.current(0, 0, false);
     };
   }, []);
 
-  // Compute live display percentages
-  const isLeftStick = mode === 'THROTTLE_YAW';
-  // Stealth Aerospace Gunmetal Gray & Titanium Silver Theme
-  const themeColor = '#e2e8f0';
-  const themeBorder = 'rgba(203, 213, 225, 0.35)';
-
-  // In RC Mode 2, Throttle: up is positive (0 to 100% or -100 to +100)
-  const throttlePct = Math.round((-valY + 1) * 50); // 0% at bottom, 50% at center, 100% at top
-  const yawPct = Math.round(valX * 100);
-  const pitchPct = Math.round(-valY * 100);
-  const rollPct = Math.round(valX * 100);
-
-  const yawStr = yawPct > 0 ? `+${yawPct}%` : `${yawPct}%`;
-  const pitchStr = pitchPct > 0 ? `+${pitchPct}%` : `${pitchPct}%`;
-  const rollStr = rollPct > 0 ? `+${rollPct}%` : `${rollPct}%`;
+  const label = mode === 'THROTTLE_YAW' ? 'THROTTLE / YAW' : 'PITCH / ROLL';
+  const verticalAxis = mode === 'THROTTLE_YAW' ? 'THR' : 'PITCH';
+  const horizontalAxis = mode === 'THROTTLE_YAW' ? 'YAW' : 'ROLL';
+  const accent = '#FFFFFF';
+  const accentMuted = 'rgba(255, 255, 255, 0.50)';
 
   return (
-    <View style={styles.wrapper}>
-      {/* Live Readout Pill Badge */}
-      <View style={[
-        styles.readoutPill, 
-        { borderColor: isEngaged ? '#cbd5e1' : 'rgba(255, 255, 255, 0.12)' },
-        isEngaged && { backgroundColor: 'rgba(15, 23, 42, 0.96)' }
-      ]}>
-        {isLeftStick ? (
-          <Text style={styles.readoutText}>
-            THR: <Text style={[styles.readoutVal, { color: '#f8fafc' }]}>{throttlePct}%</Text>  YAW: <Text style={[styles.readoutVal, { color: '#f8fafc' }]}>{yawStr}</Text>
-          </Text>
-        ) : (
-          <Text style={styles.readoutText}>
-            PIT: <Text style={[styles.readoutVal, { color: '#f8fafc' }]}>{pitchStr}</Text>  ROL: <Text style={[styles.readoutVal, { color: '#f8fafc' }]}>{rollStr}</Text>
-          </Text>
-        )}
-      </View>
-
+    <View style={[styles.wrapper, isInteracting ? styles.wrapperActive : styles.wrapperIdle]}>
       <PanGestureHandler
-        onGestureEvent={handleGestureEvent}
-        onHandlerStateChange={handleStateChange}
+        maxPointers={1}
+        minDist={0}
+        shouldCancelWhenOutside={false}
+        onGestureEvent={onGesture}
+        onHandlerStateChange={onState}
       >
-        <View 
+        <View
+          accessible
+          accessibilityLabel={`${label} virtual joystick`}
           style={[
-            styles.gimbalBezel, 
-            { 
-              width: size, 
-              height: size, 
-              borderRadius: size / 2,
-              borderColor: isEngaged ? '#e2e8f0' : themeBorder,
-              shadowColor: isEngaged ? '#ffffff' : '#000',
-            },
-            isEngaged && styles.gimbalBezelEngaged
+            styles.base,
+            isInteracting && styles.baseActive,
+            { width: size, height: size, borderRadius: size / 2 },
           ]}
         >
-          {/* CNC Outer Notch Ring */}
-          <View style={[styles.cncGuardRing, { width: size * 0.85, height: size * 0.85, borderRadius: (size * 0.85) / 2 }]} />
-          
-          {/* Concentric Deflection Rings */}
-          <View style={[
-            styles.deflectionRing, 
-            { 
-              width: size * 0.55, 
-              height: size * 0.55, 
-              borderRadius: (size * 0.55) / 2,
-              borderColor: 'rgba(203, 213, 225, 0.2)',
-            }
-          ]} />
-          
-          {/* Axis Crosshairs */}
-          <View style={styles.axisH} />
-          <View style={styles.axisV} />
+          <View style={[styles.touchHalo, { borderRadius: size / 2 }, isInteracting && { borderColor: accent }]} />
+          <View style={styles.verticalAxis} />
+          <View style={styles.horizontalAxis} />
+          <View style={[styles.deadzone, { borderColor: accentMuted }]} />
+          <Text pointerEvents="none" style={[styles.verticalAxisLabel, { color: accent }]}>{verticalAxis}</Text>
+          <Text pointerEvents="none" style={[styles.horizontalAxisLabel, { color: accent }]}>{horizontalAxis}</Text>
 
-          {/* Mode 2 Left: Throttle Notch Scale (0%, 25%, 50%, 75%, 100%) */}
-          {isLeftStick ? (
-            <>
-              {/* Vertical Scale Ticks */}
-              <View style={styles.throttleScaleContainer}>
-                <View style={styles.throttleTickMark}><Text style={styles.scaleNumber}>100</Text></View>
-                <View style={styles.throttleTickMark}><Text style={styles.scaleNumber}>75</Text></View>
-                <View style={[styles.throttleTickMark, styles.throttleCenterMark]}><Text style={[styles.scaleNumber, styles.hoverCenterText]}>50</Text></View>
-                <View style={styles.throttleTickMark}><Text style={styles.scaleNumber}>25</Text></View>
-                <View style={styles.throttleTickMark}><Text style={styles.scaleNumber}>0</Text></View>
-              </View>
-
-              {/* Yaw Labels */}
-              <Text style={[styles.yawLeftLabel, { color: '#cbd5e1' }]}>◀ L</Text>
-              <Text style={[styles.yawRightLabel, { color: '#cbd5e1' }]}>R ▶</Text>
-            </>
-          ) : (
-            /* Mode 2 Right: 4-Way Directional Arrow Guides */
-            <>
-              <Text style={[styles.dirFwd, { color: '#cbd5e1' }]}>▲ FWD</Text>
-              <Text style={[styles.dirRev, { color: '#cbd5e1' }]}>▼ REV</Text>
-              <Text style={[styles.dirLeft, { color: '#cbd5e1' }]}>◀ L</Text>
-              <Text style={[styles.dirRight, { color: '#cbd5e1' }]}>R ▶</Text>
-            </>
-          )}
-
-          {/* Center Rest Crosshair Notch */}
-          <View style={[styles.centerRestDot, { backgroundColor: '#e2e8f0' }]} />
-
-          {/* Machined Metal Thumbstick Stick-End */}
           <Animated.View
             style={[
-              styles.knurledStick,
-              { 
-                width: stickRadius * 2, 
-                height: stickRadius * 2, 
-                borderRadius: stickRadius,
-                marginLeft: -stickRadius,
-                marginTop: -stickRadius,
-                borderColor: isEngaged ? '#ffffff' : 'rgba(203, 213, 225, 0.45)',
-                shadowColor: isEngaged ? '#ffffff' : '#000',
-              },
-              isEngaged && styles.knurledStickEngaged,
+              styles.knob,
+              { borderColor: accent, shadowColor: accent },
               {
+                width: knobRadius * 2,
+                height: knobRadius * 2,
+                borderRadius: knobRadius,
+                marginLeft: -knobRadius,
+                marginTop: -knobRadius,
                 transform: [{ translateX: pan.x }, { translateY: pan.y }],
               },
             ]}
           >
-            {/* Grip Texture Concentric Rings */}
-            <View style={styles.stickGripRing} />
-            {/* Center Status LED */}
-            <View style={[
-              styles.stickCenterLed,
-              { backgroundColor: isEngaged ? '#ffffff' : 'rgba(203, 213, 225, 0.6)' },
-              isEngaged && { shadowColor: '#ffffff', backgroundColor: '#ffffff' }
-            ]} />
+            <View style={[styles.knobInner, isInteracting && styles.knobInnerActive]}>
+              <View style={[styles.knobCore, { backgroundColor: accent }]} />
+              <View style={styles.knobHighlight} />
+            </View>
           </Animated.View>
         </View>
       </PanGestureHandler>
 
-      {/* Axis Type Subtitle */}
-      <Text style={[styles.gimbalTitle, { color: '#94a3b8' }]}>
-        {isLeftStick ? 'MODE 2: THROTTLE / YAW' : 'MODE 2: PITCH / ROLL'}
-      </Text>
+      <View style={[styles.labelPill, isInteracting && { borderColor: accentMuted }]}>
+        <View style={[styles.labelDot, { backgroundColor: accent }]} />
+        <Text style={[styles.label, isInteracting && { color: accent }]}>{label}</Text>
+      </View>
     </View>
   );
 }
@@ -221,174 +161,140 @@ const styles = StyleSheet.create({
   wrapper: {
     alignItems: 'center',
   },
-  readoutPill: {
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-    marginBottom: 4,
+  wrapperIdle: {
+    opacity: 0.94,
   },
-  readoutText: {
-    color: '#94a3b8',
-    fontSize: 9,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
+  wrapperActive: {
+    opacity: 1,
   },
-  readoutVal: {
-    fontWeight: '900',
-  },
-  gimbalBezel: {
-    backgroundColor: 'rgba(15, 23, 42, 0.72)',
-    justifyContent: 'center',
+  base: {
     alignItems: 'center',
-    borderWidth: 2,
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.62)',
+    backgroundColor: 'rgba(255, 255, 255, 0.20)',
     position: 'relative',
     overflow: 'hidden',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 6,
-    elevation: 8,
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.34,
+    shadowRadius: 16,
+    elevation: 9,
   },
-  gimbalBezelEngaged: {
-    backgroundColor: 'rgba(15, 23, 42, 0.9)',
-    shadowOpacity: 0.7,
-    shadowRadius: 12,
+  baseActive: {
+    borderColor: 'rgba(255, 255, 255, 0.88)',
+    backgroundColor: 'rgba(255, 255, 255, 0.32)',
   },
-  cncGuardRing: {
-    position: 'absolute',
+  touchHalo: {
+    ...StyleSheet.absoluteFillObject,
+    margin: 6,
     borderWidth: 1,
-    borderColor: 'rgba(203, 213, 225, 0.2)',
-    borderStyle: 'dashed',
+    borderColor: 'rgba(255, 255, 255, 0.48)',
   },
-  deflectionRing: {
+  verticalAxis: {
     position: 'absolute',
-    borderWidth: 1,
-  },
-  axisH: {
-    position: 'absolute',
-    left: 4,
-    right: 4,
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-  },
-  axisV: {
-    position: 'absolute',
-    top: 4,
-    bottom: 4,
-    width: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-  },
-  throttleScaleContainer: {
-    position: 'absolute',
-    left: 6,
-    top: 10,
-    bottom: 10,
-    justifyContent: 'space-between',
-  },
-  throttleTickMark: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  throttleCenterMark: {
-    borderLeftWidth: 3,
-    borderLeftColor: '#e2e8f0',
-    paddingLeft: 2,
-  },
-  scaleNumber: {
-    color: '#94a3b8',
-    fontSize: 7.5,
-    fontWeight: 'bold',
-  },
-  hoverCenterText: {
-    color: '#f8fafc',
-    fontWeight: '900',
-  },
-  yawLeftLabel: {
-    position: 'absolute',
-    left: 8,
-    fontSize: 8,
-    fontWeight: '800',
-  },
-  yawRightLabel: {
-    position: 'absolute',
-    right: 8,
-    fontSize: 8,
-    fontWeight: '800',
-  },
-  dirFwd: {
-    position: 'absolute',
-    top: 6,
-    fontSize: 7.5,
-    fontWeight: '800',
-  },
-  dirRev: {
-    position: 'absolute',
-    bottom: 6,
-    fontSize: 7.5,
-    fontWeight: '800',
-  },
-  dirLeft: {
-    position: 'absolute',
-    left: 6,
-    fontSize: 7.5,
-    fontWeight: '800',
-  },
-  dirRight: {
-    position: 'absolute',
-    right: 6,
-    fontSize: 7.5,
-    fontWeight: '800',
-  },
-  centerRestDot: {
-    position: 'absolute',
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    opacity: 0.6,
-  },
-  knurledStick: {
-    position: 'absolute',
-    top: '50%',
+    top: '14%',
+    bottom: '14%',
     left: '50%',
-    backgroundColor: 'rgba(30, 41, 59, 0.95)',
-    borderWidth: 2,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.6,
-    shadowRadius: 5,
-    elevation: 8,
+    width: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.42)',
   },
-  knurledStickEngaged: {
-    backgroundColor: 'rgba(15, 23, 42, 0.98)',
-    shadowOpacity: 0.9,
-    shadowRadius: 12,
-  },
-  stickGripRing: {
+  horizontalAxis: {
     position: 'absolute',
-    width: '70%',
-    height: '70%',
+    left: '14%',
+    right: '14%',
+    top: '50%',
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.42)',
+  },
+  deadzone: {
+    position: 'absolute',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+  },
+  verticalAxisLabel: {
+    position: 'absolute',
+    top: 10,
+    fontSize: 7,
+    fontWeight: '900',
+    letterSpacing: 0.7,
+  },
+  horizontalAxisLabel: {
+    position: 'absolute',
+    left: 9,
+    fontSize: 7,
+    fontWeight: '900',
+    letterSpacing: 0.7,
+    transform: [{ rotate: '-90deg' }],
+  },
+  knob: {
+    position: 'absolute',
+    left: '50%',
+    top: '50%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2.5,
+    backgroundColor: 'rgba(255, 255, 255, 0.68)',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.38,
+    shadowRadius: 9,
+    elevation: 12,
+  },
+  knobInner: {
+    width: '76%',
+    height: '76%',
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: 'rgba(203, 213, 225, 0.25)',
-    borderStyle: 'dashed',
+    borderColor: 'rgba(255, 255, 255, 0.58)',
+    backgroundColor: 'rgba(255, 255, 255, 0.34)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
   },
-  stickCenterLed: {
-    width: 9,
-    height: 9,
-    borderRadius: 4.5,
+  knobInnerActive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.54)',
+  },
+  knobCore: {
+    width: '48%',
+    height: '48%',
+    borderRadius: 999,
+    opacity: 0.9,
+  },
+  knobHighlight: {
+    position: 'absolute',
+    top: '14%',
+    left: '22%',
+    width: '42%',
+    height: '18%',
+    borderRadius: 999,
+    backgroundColor: 'rgba(255, 255, 255, 0.72)',
+    transform: [{ rotate: '-18deg' }],
+  },
+  labelPill: {
+    marginTop: 8,
+    minHeight: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#fff',
+    borderColor: 'rgba(255, 255, 255, 0.48)',
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
   },
-  gimbalTitle: {
-    marginTop: 4,
+  label: {
+    color: '#E2E8F0',
+    fontSize: 8,
     fontWeight: '800',
-    fontSize: 8.5,
-    letterSpacing: 0.8,
-    textShadowColor: '#000',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 3,
+    letterSpacing: 0.9,
+  },
+  labelDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
   },
 });

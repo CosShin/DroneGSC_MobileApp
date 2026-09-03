@@ -36,11 +36,11 @@ export function BatteryCard() {
       <View style={styles.row}>
         <View style={styles.col}>
           <Text style={styles.label}>VOLTAGE</Text>
-          <Text style={styles.value}>{voltage.toFixed(1)} <Text style={styles.unit}>V</Text></Text>
+          <Text style={styles.value}>{voltage === null ? '--' : voltage.toFixed(1)} <Text style={styles.unit}>V</Text></Text>
         </View>
         <View style={styles.col}>
           <Text style={styles.label}>CURRENT</Text>
-          <Text style={styles.value}>{current.toFixed(1)} <Text style={styles.unit}>A</Text></Text>
+          <Text style={styles.value}>{current === null ? '--' : current.toFixed(1)} <Text style={styles.unit}>A</Text></Text>
         </View>
         <View style={styles.col}>
           <Text style={styles.label}>REMAINING</Text>

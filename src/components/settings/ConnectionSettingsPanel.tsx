@@ -38,10 +38,6 @@ export function ConnectionSettingsPanel() {
 
   const connectionTabs: { id: ConnectionType; label: string; icon: string }[] = [
     { id: 'UDP', label: 'UDP', icon: '📶' },
-    { id: 'TCP', label: 'TCP', icon: '🌐' },
-    { id: 'USB_SERIAL', label: 'USB OTG', icon: '🔌' },
-    { id: 'BLUETOOTH', label: 'BLUETOOTH', icon: '📡' },
-    { id: 'MOCK', label: 'SITL MOCK', icon: '🎮' },
   ];
 
   const vehicleTypes: { id: VehicleType; label: string; icon: string }[] = [
@@ -122,12 +118,12 @@ export function ConnectionSettingsPanel() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>UDP Network Parameters</Text>
           <View style={styles.inputRow}>
-            <Text style={styles.label}>Remote Host (Companion Computer / WiFi Telemetry IP)</Text>
+            <Text style={styles.label}>Discovery Broadcast or Pi/VPN IP</Text>
             <TextInput 
               style={styles.input}
               value={config.udp.remoteHost}
               onChangeText={(text) => dispatch(updateUdpSettings({ remoteHost: text }))}
-              placeholder="0.0.0.0 or 192.168.1.100"
+              placeholder="255.255.255.255 or Pi/VPN IP"
               placeholderTextColor="#555"
             />
           </View>

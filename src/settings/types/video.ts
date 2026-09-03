@@ -1,4 +1,6 @@
-export type VideoSource = 'Disabled' | 'RTSP' | 'UDP H.264' | 'UDP H.265' | 'MPEG-TS' | 'Integrated Camera';
+import type { VideoTransport, WebRtcVideoConfig } from '../../video/VideoTypes';
+
+export type VideoSource = 'Disabled' | 'WebRTC' | 'RTSP' | 'UDP H.264' | 'UDP H.265' | 'MPEG-TS' | 'Integrated Camera';
 export type VideoResolution = 'Auto' | '720p' | '1080p';
 export type VideoFps = 15 | 24 | 30 | 60;
 export type VideoBitrate = 'Auto' | 'Low' | 'Medium' | 'High' | 'Custom';
@@ -6,7 +8,8 @@ export type VideoBuffer = 'Low' | 'Medium' | 'High';
 export type VideoFormat = 'MP4' | 'MKV';
 export type RtspTransport = 'UDP' | 'TCP';
 
-export interface VideoSettings {
+export interface VideoSettings extends WebRtcVideoConfig {
+  transport: VideoTransport;
   source: VideoSource;
   
   // UDP config

@@ -8,7 +8,19 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "requireFullScreen": true
+      "requireFullScreen": true,
+      "bundleIdentifier": "com.anonymous.anitechgcs",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocalNetworkUsageDescription": "ANITECH GCS connects to your vehicle and Raspberry Pi gateway on the local network.",
+        "NSLocationWhenInUseUsageDescription": "ANITECH GCS uses your location to center the map when no vehicle GPS is available.",
+        "NSMicrophoneUsageDescription": "ANITECH GCS requires microphone access for pilot voice assistance.",
+        "NSSpeechRecognitionUsageDescription": "ANITECH GCS uses speech recognition to analyze flight inquiries and status queries.",
+        "NSBonjourServices": [
+          "_mavlink._udp",
+          "_http._tcp"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -17,13 +29,75 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.anitechgcs",
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_WIFI_STATE",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-video"
-    ]
+      "expo-video",
+      "react-native-vlc-media-player",
+      "expo-splash-screen",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow ANITECH GCS to show your phone location on the map when no vehicle is connected."
+        }
+      ],
+      [
+        "expo-screen-orientation",
+        {
+          "initialOrientation": "LANDSCAPE"
+        }
+      ],
+      "expo-font",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true,
+            "minSdkVersion": 26
+          },
+          "ios": {
+            "deploymentTarget": "16.4"
+          }
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow ANITECH GCS to access captured flight media.",
+          "savePhotosPermission": "Allow ANITECH GCS to save flight photos and videos.",
+          "isAccessMediaLocationEnabled": false,
+          "granularPermissions": [
+            "photo",
+            "video"
+          ]
+        }
+      ],
+      "expo-secure-store",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "ANITECH GCS requires microphone access for pilot voice assistance.",
+          "speechRecognitionPermission": "ANITECH GCS uses speech recognition to analyze flight inquiries and status queries."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "e78787e0-2805-4998-a13c-f688efde496a"
+      }
+    },
+    "owner": "cossshin"
   }
 }

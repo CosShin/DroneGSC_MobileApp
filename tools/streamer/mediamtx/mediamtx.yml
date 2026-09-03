@@ -371,7 +371,9 @@ webrtcIPsFromInterfaces: yes
 # List of interfaces whose IPs will be sent to clients.
 # An empty value means to use all available interfaces.
 webrtcIPsFromInterfacesList: []
-# List of additional hosts or IPs to send to clients.
+# List of additional hosts or IPs to send to clients. Keep deployment-specific
+# addresses out of mobile source. On the Pi, set its reachable LAN/VPN address
+# here or with MTX_WEBRTCADDITIONALHOSTS (for example: 192.168.x.x).
 webrtcAdditionalHosts: []
 # ICE servers. Needed only when local listeners can't be reached by clients.
 # STUN servers allows to obtain and share the public IP of the server.

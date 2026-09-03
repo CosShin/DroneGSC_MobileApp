@@ -50,10 +50,10 @@ export function FlightScreen() {
 
   return (
     <View style={styles.container}>
-      <StatusBar hidden={true} translucent={true} />
+      <StatusBar hidden={true} />
       
       {/* Full Screen Background Layer */}
-      <View style={StyleSheet.absoluteFillObject}>
+      <View style={StyleSheet.absoluteFill}>
         {mainViewMode === 'MAP' ? <MapContainer /> : <HudContainer />}
       </View>
 
@@ -63,6 +63,10 @@ export function FlightScreen() {
         {/* Top Overlay Bar */}
         <View style={styles.topOverlay} pointerEvents="box-none">
           <TopBar />
+        </View>
+
+        <View style={styles.warningOverlay} pointerEvents="none">
+          <WarningBanner />
         </View>
 
         {/* Floating Commands Box (Top Right, placed to the left of Altitude tape) */}
@@ -159,6 +163,13 @@ const styles = StyleSheet.create({
     top: 44,
     width: 165,
     zIndex: 25,
+  },
+  warningOverlay: {
+    position: 'absolute',
+    top: 40,
+    left: '25%',
+    right: '25%',
+    zIndex: 28,
   },
   leftJoystickOverlay: {
     position: 'absolute',

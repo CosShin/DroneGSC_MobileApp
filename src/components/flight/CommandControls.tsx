@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useAppSelector } from '../../store/hooks';
 import { selectCommandState } from '../../store/command/commandSlice';
-import { selectIsConnected } from '../../store/connection/connectionSlice';
+import { selectIsConnected, selectVehicleState } from '../../store/connection/connectionSlice';
 import { selectIsArmed } from '../../store/drone/droneSlice';
 import { safetyLayer } from '../../services/command/SafetyLayer';
 import { DroneCommand } from '../../types/command';
@@ -10,6 +10,7 @@ import { CommandConfirmationModal } from './CommandConfirmationModal';
 
 export function CommandControls() {
   const isConnected = useAppSelector(selectIsConnected);
+  const vehicleState = useAppSelector(selectVehicleState);
   const isArmed = useAppSelector(selectIsArmed);
   const { lastCommandStatus, pendingCommand, lastCommandError } = useAppSelector(selectCommandState);
   
@@ -33,6 +34,11 @@ export function CommandControls() {
   };
 
   const isPending = pendingCommand !== null;
+  const controlsLockReason = isConnected
+    ? null
+    : vehicleState === 'STALE'
+      ? 'CONTROLS LOCKED: HEARTBEAT LOST'
+      : 'CONTROLS LOCKED: NO FRESH VEHICLE';
 
   return (
     <View style={styles.container}>
@@ -41,7 +47,13 @@ export function CommandControls() {
         <Text style={styles.sectionTitle}>FLIGHT COMMANDS</Text>
       </View>
       
-      {lastCommandStatus === 'REJECTED' || lastCommandStatus === 'FAILED' ? (
+      {controlsLockReason ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{controlsLockReason}</Text>
+        </View>
+      ) : null}
+
+      {lastCommandStatus === 'DENIED' || lastCommandStatus === 'FAILED' || lastCommandStatus === 'UNSUPPORTED' || lastCommandStatus === 'TIMEOUT' ? (
         <View style={styles.errorBanner}>
           <Text style={styles.errorText}>
             {lastCommandStatus}: {lastCommandError}

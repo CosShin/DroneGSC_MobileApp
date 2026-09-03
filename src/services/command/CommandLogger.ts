@@ -4,9 +4,9 @@ class CommandLogger {
   log(result: CommandResult) {
     const time = new Date(result.timestamp).toISOString();
     if (result.success) {
-      console.log(`[MOCK COMMAND] [${time}] ${result.command} - SUCCESS`);
+      console.log(`[MAVLink COMMAND] [${time}] ${result.command} - ACCEPTED`);
     } else {
-      console.warn(`[MOCK COMMAND] [${time}] ${result.command} - REJECTED: ${result.error}`);
+      console.warn(`[MAVLink COMMAND] [${time}] ${result.command} - ${result.status ?? 'FAILED'}: ${result.error}`);
     }
   }
 }

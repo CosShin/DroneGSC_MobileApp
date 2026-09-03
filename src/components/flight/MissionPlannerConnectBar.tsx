@@ -4,9 +4,7 @@ import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { 
   selectConnectionConfig, 
   setConnectionType,
-  updateSerialSettings,
-  updateUdpSettings,
-  updateTcpSettings
+  updateUdpSettings
 } from '../../store/settings/settingsSlice';
 import { 
   selectConnectionStatus, 
@@ -35,73 +33,46 @@ export function MissionPlannerConnectBar() {
 
   // Mission Planner Protocol / Port List
   const portOptions: DropdownItem[] = [
-    { id: 'AUTO', label: 'AUTO', type: 'UDP', defaultBaudOrPort: 14550 },
-    { id: 'COM_PIXHAWK', label: 'COM5 Pixhawk USB (OTG)', type: 'USB_SERIAL', defaultBaudOrPort: 115200 },
-    { id: 'COM_RADIO', label: 'COM9 SiK Radio 433/915MHz', type: 'USB_SERIAL', defaultBaudOrPort: 57600 },
-    { id: 'COM_BLE', label: 'COM4 Bluetooth Serial Link (BLE)', type: 'BLUETOOTH', defaultBaudOrPort: 57600 },
-    { id: 'TCP', label: 'TCP (192.168.1.100:5760)', type: 'TCP', defaultBaudOrPort: 5760 },
-    { id: 'UDP', label: 'UDP (14550 Broadcast)', type: 'UDP', defaultBaudOrPort: 14550 },
-    { id: 'UDPCI', label: 'UDPCI (14551 Client)', type: 'UDP', defaultBaudOrPort: 14551 },
-    { id: 'WS', label: 'WS (MAVLink WebSocket)', type: 'TCP', defaultBaudOrPort: 8080 },
-    { id: 'SITL', label: 'SITL (Virtual Flight Simulation)', type: 'MOCK', defaultBaudOrPort: 5760 },
+    { id: 'UDP', label: 'UDP AUTO (14550)', type: 'UDP', defaultBaudOrPort: 14550 },
   ];
 
   // Baudrate & Port Options
   const baudOptions = [
-    { label: '115200', value: 115200 },
-    { label: '57600', value: 57600 },
-    { label: '921600', value: 921600 },
-    { label: '38400', value: 38400 },
-    { label: '19200', value: 19200 },
-    { label: '9600', value: 9600 },
     { label: '14550 (UDP)', value: 14550 },
-    { label: '14551 (UDP)', value: 14551 },
-    { label: '5760 (TCP)', value: 5760 },
   ];
 
   // Determine current active display labels
   const getCurrentPortLabel = () => {
-    if (config.type === 'UDP') return config.udp.remotePort === 14551 ? 'UDPCI' : 'UDP';
-    if (config.type === 'TCP') return 'TCP';
-    if (config.type === 'USB_SERIAL') return config.serial.baudRate === 57600 ? 'COM9' : 'COM5';
-    if (config.type === 'BLUETOOTH') return 'COM4 BLE';
-    if (config.type === 'MOCK') return 'SITL';
-    return 'UDP';
+    return 'UDP AUTO';
   };
 
   const getCurrentBaudLabel = () => {
     if (config.type === 'UDP') return `${config.udp.remotePort}`;
-    if (config.type === 'TCP') return `${config.tcp.port}`;
-    if (config.type === 'USB_SERIAL') return `${config.serial.baudRate}`;
-    if (config.type === 'BLUETOOTH') return `${config.bluetooth.baudRate}`;
-    return '115200';
+    return `${config.udp.remotePort}`;
   };
 
   const handleSelectPort = (item: DropdownItem) => {
     dispatch(setConnectionType(item.type));
     if (item.defaultBaudOrPort) {
-      if (item.type === 'USB_SERIAL') dispatch(updateSerialSettings({ baudRate: item.defaultBaudOrPort }));
       if (item.type === 'UDP') dispatch(updateUdpSettings({ remotePort: item.defaultBaudOrPort, localPort: item.defaultBaudOrPort }));
-      if (item.type === 'TCP') dispatch(updateTcpSettings({ port: item.defaultBaudOrPort }));
     }
     setShowPortMenu(false);
   };
 
   const handleSelectBaud = (value: number) => {
-    if (config.type === 'USB_SERIAL') dispatch(updateSerialSettings({ baudRate: value }));
-    else if (config.type === 'UDP') dispatch(updateUdpSettings({ remotePort: value, localPort: value }));
-    else if (config.type === 'TCP') dispatch(updateTcpSettings({ port: value }));
+    dispatch(updateUdpSettings({ remotePort: value, localPort: value }));
     setShowBaudMenu(false);
   };
 
   const handleToggleConnect = () => {
-    if (isConnected || isConnecting) {
+    if (isConnected) {
       universalConnectionService.disconnect();
-    } else {
-      let portString = `${getCurrentPortLabel()}:${getCurrentBaudLabel()}`;
-      dispatch(setActiveConnectionInfo({ type: config.type, portInfo: portString }));
-      universalConnectionService.connect(config);
+      return;
     }
+
+    const portString = `${getCurrentPortLabel()}:${getCurrentBaudLabel()}`;
+    dispatch(setActiveConnectionInfo({ type: config.type, portInfo: portString }));
+    universalConnectionService.connect(config);
   };
 
   return (
@@ -150,7 +121,7 @@ export function MissionPlannerConnectBar() {
           { backgroundColor: isConnected ? '#22c55e' : isConnecting ? '#f59e0b' : '#ef4444' }
         ]} />
         <Text style={[styles.connectText, isConnected ? styles.connectTextActive : styles.connectTextIdle]}>
-          {isConnected ? 'DISCONNECT' : isConnecting ? 'CONNECTING...' : 'CONNECT'}
+          {isConnected ? 'DISCONNECT' : isConnecting ? 'RETRY' : 'CONNECT'}
         </Text>
       </TouchableOpacity>
 
@@ -168,7 +139,7 @@ export function MissionPlannerConnectBar() {
             </View>
             <ScrollView style={styles.menuScroll} bounces={false}>
               {portOptions.map((opt) => {
-                const isSelected = opt.type === config.type && (opt.id === 'UDP' || opt.id === 'AUTO' || opt.id === 'TCP' || opt.id === 'COM_PIXHAWK');
+                const isSelected = opt.type === config.type && opt.id === 'UDP' && config.udp.remotePort === 14550;
                 return (
                   <TouchableOpacity
                     key={opt.id}

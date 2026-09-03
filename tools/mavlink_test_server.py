@@ -13,9 +13,15 @@ import time
 import math
 import sys
 import socket
+import struct
+import os
 from aiohttp import web
 
-WS_PORT = 8088
+WS_PORT = int(os.environ.get("ANITECH_MAVLINK_TEST_PORT", "8765"))
+CRC_EXTRA = {0: 50, 1: 124, 24: 24, 30: 39, 33: 104, 69: 243, 76: 152, 77: 143}
+MODE_NUMBER = {"STABILIZE": 0, "ALT_HOLD": 2, "AUTO": 3, "GUIDED": 4, "LOITER": 5, "RTL": 6, "LAND": 9, "POSHOLD": 16, "TAKEOFF": 4}
+MODE_NAME = {value: key for key, value in MODE_NUMBER.items()}
+mavlink_sequence = 0
 
 # Flight Simulation State
 sim_state = {
@@ -51,6 +57,117 @@ total_cmds_received = 0
 def log_event(tag, msg):
     timestamp = time.strftime("%H:%M:%S")
     print(f"[{timestamp}] [{tag}] {msg}", flush=True)
+
+def x25_crc(data: bytes, extra: int) -> int:
+    crc = 0xFFFF
+    for byte in data + bytes([extra]):
+        tmp = byte ^ (crc & 0xFF)
+        tmp ^= (tmp << 4) & 0xFF
+        crc = ((crc >> 8) ^ (tmp << 8) ^ (tmp << 3) ^ (tmp >> 4)) & 0xFFFF
+    return crc
+
+def encode_frame(message_id: int, payload: bytes) -> bytes:
+    global mavlink_sequence
+    extra = CRC_EXTRA[message_id]
+    header = bytes([
+        len(payload), 0, 0, mavlink_sequence & 0xFF, 1, 1,
+        message_id & 0xFF, (message_id >> 8) & 0xFF, (message_id >> 16) & 0xFF,
+    ])
+    mavlink_sequence = (mavlink_sequence + 1) & 0xFF
+    crc = x25_crc(header + payload, extra)
+    return b"\xFD" + header + payload + struct.pack("<H", crc)
+
+def encode_ack(command: int, result: int = 0) -> bytes:
+    return encode_frame(77, struct.pack("<HBBiBB", command, result, 100, 0, 255, 190))
+
+def telemetry_packet(tick: int, hover_roll: float, hover_pitch: float) -> bytes:
+    frames = []
+    boot_ms = tick * 50
+    attitude = struct.pack(
+        "<Iffffff", boot_ms, math.radians(hover_roll), math.radians(hover_pitch),
+        math.radians(sim_state["yaw"]), 0.0, 0.0, 0.0,
+    )
+    frames.append(encode_frame(30, attitude))
+
+    if tick % 4 == 0:
+        heading = int(sim_state["heading"] * 100) % 36000
+        speed_cms = int(sim_state["speed"] * 100)
+        position = struct.pack(
+            "<IiiiihhhH", boot_ms, int(sim_state["latitude"] * 1e7),
+            int(sim_state["longitude"] * 1e7), int(sim_state["altitude"] * 1000),
+            int(sim_state["altitude"] * 1000), speed_cms, 0, 0, heading,
+        )
+        frames.append(encode_frame(33, position))
+
+    if tick % 10 == 0:
+        sensors = 0x2000000 | 0x20 | 0x01 | 0x02 | 0x04 | 0x08
+        battery = max(0, min(100, round(sim_state["battery"])))
+        status = struct.pack(
+            "<IIIHHhb", sensors, sensors, sensors, 200,
+            int(sim_state["voltage"] * 1000), int(sim_state["current"] * 100), battery,
+        ) + bytes(12)
+        frames.append(encode_frame(1, status))
+        gps = struct.pack(
+            "<QiiiHHHHBB", int(time.time() * 1_000_000), int(sim_state["latitude"] * 1e7),
+            int(sim_state["longitude"] * 1e7), int(sim_state["altitude"] * 1000),
+            int(sim_state["hdop"] * 100), 100, int(sim_state["speed"] * 100),
+            int(sim_state["heading"] * 100) % 36000, 3, sim_state["satellites"],
+        )
+        frames.append(encode_frame(24, gps))
+
+    if tick % 20 == 0:
+        base_mode = 0x80 if sim_state["armed"] else 0
+        heartbeat = struct.pack(
+            "<IBBBBB", MODE_NUMBER.get(sim_state["mode"], 5), 2, 3, base_mode, 4, 3,
+        )
+        frames.append(encode_frame(0, heartbeat))
+    return b"".join(frames)
+
+async def handle_binary_message(packet: bytes, ws):
+    global total_cmds_received
+    total_cmds_received += 1
+    sim_state["bytesRx"] += len(packet)
+    offset = 0
+    while offset + 12 <= len(packet):
+        if packet[offset] != 0xFD:
+            offset += 1
+            continue
+        payload_length = packet[offset + 1]
+        frame_length = 12 + payload_length + (13 if packet[offset + 2] & 1 else 0)
+        if offset + frame_length > len(packet):
+            break
+        message_id = packet[offset + 7] | packet[offset + 8] << 8 | packet[offset + 9] << 16
+        payload = packet[offset + 10:offset + 10 + payload_length]
+        if message_id == 76 and len(payload) >= 33:
+            params = struct.unpack("<7f", payload[:28])
+            command = struct.unpack("<H", payload[28:30])[0]
+            if command == 400:
+                sim_state["armed"] = params[0] >= 0.5
+            elif command == 22:
+                sim_state["target_alt"] = max(0.0, params[6])
+                sim_state["mode"] = "TAKEOFF"
+            elif command == 21:
+                sim_state["mode"] = "LAND"
+                sim_state["target_alt"] = 0.0
+            elif command == 20:
+                sim_state["mode"] = "RTL"
+            elif command == 176:
+                sim_state["mode"] = MODE_NAME.get(round(params[1]), sim_state["mode"])
+            if command != 511:
+                log_event("MAVLink CMD", f"COMMAND_LONG {command} accepted")
+            await ws.send_bytes(encode_ack(command))
+        elif message_id == 69 and len(payload) >= 11 and sim_state["armed"]:
+            pitch, roll, throttle, yaw, _buttons, _target = struct.unpack("<hhhhHB", payload[:11])
+            sim_state["pitch"] = pitch / 1000 * 35
+            sim_state["roll"] = roll / 1000 * 35
+            sim_state["yaw"] = (sim_state["yaw"] + yaw / 1000 * 4) % 360
+            sim_state["heading"] = round(sim_state["yaw"])
+            if throttle > 550:
+                sim_state["altitude"] += (throttle / 1000 - 0.5) * 0.8
+            elif throttle < 450:
+                sim_state["altitude"] = max(0.0, sim_state["altitude"] - (0.5 - throttle / 1000) * 0.8)
+            sim_state["speed"] = math.hypot(pitch, roll) / 1000 * 12
+        offset += frame_length
 
 async def handle_client_message(data_str: str):
     global sim_state, total_cmds_received
@@ -163,26 +280,18 @@ async def physics_and_broadcast_loop():
             sim_state["battery"] = max(5.0, round(sim_state["battery"] - 0.003, 1))
 
         sim_state["timestamp"] = int(time.time() * 1000)
-        sim_state["bytesTx"] += 140
+        packet = telemetry_packet(tick, hover_roll, hover_pitch)
+        sim_state["bytesTx"] += len(packet)
 
         if connected_clients:
-            telemetry_payload = json.dumps({
-                "type": "TELEMETRY",
-                "data": {
-                    **sim_state,
-                    "roll": round(hover_roll, 1),
-                    "pitch": round(hover_pitch, 1),
-                }
-            })
-
             for ws in list(connected_clients):
                 try:
-                    await ws.send_str(telemetry_payload)
+                    await ws.send_bytes(packet)
                 except Exception:
-                    pass
+                    connected_clients.discard(ws)
 
 async def websocket_handler(request):
-    ws = web.WebSocketResponse()
+    ws = web.WebSocketResponse(max_msg_size=1024 * 1024)
     await ws.prepare(request)
     connected_clients.add(ws)
     client_ip = request.remote
@@ -190,10 +299,12 @@ async def websocket_handler(request):
 
     try:
         async for msg in ws:
-            if msg.type == web.WSMsgType.TEXT:
+            if msg.type == web.WSMsgType.BINARY:
+                await handle_binary_message(bytes(msg.data), ws)
+            elif msg.type == web.WSMsgType.TEXT:
                 await handle_client_message(msg.data)
     finally:
-        connected_clients.remove(ws)
+        connected_clients.discard(ws)
         log_event("CLIENT DISCONNECTED", f"App disconnected ({client_ip})")
     return ws
 
@@ -209,8 +320,10 @@ def get_local_ip():
 
 async def main():
     app = web.Application()
+    app.router.add_get("/mavlink", websocket_handler)
     app.router.add_get("/ws", websocket_handler)
-    app.router.add_get("/", lambda r: web.Response(text="ANITECH GCS MAVLink Test Server Running OK"))
+    app.router.add_get("/health", lambda r: web.json_response({"ok": True, "clients": len(connected_clients)}))
+    app.router.add_get("/", lambda r: web.Response(text="ANITECH GCS Binary MAVLink Test Server Running OK"))
     
     runner = web.AppRunner(app)
     await runner.setup()
@@ -221,7 +334,7 @@ async def main():
     print("=" * 70, flush=True)
     print("ANITECH GCS - MAVLINK INTERACTIVE FLIGHT TEST SERVER", flush=True)
     print("=" * 70, flush=True)
-    print(f"WebSocket Server Address : ws://{local_ip}:{WS_PORT}/ws", flush=True)
+    print(f"Binary WebSocket Address : ws://{local_ip}:{WS_PORT}/mavlink", flush=True)
     print(f"For Real Phone / Tablet  : Enter '{local_ip}' in App Settings -> CONNECTION", flush=True)
     print(f"For Android Emulator     : Enter '10.0.2.2' in App Settings -> CONNECTION", flush=True)
     print("=" * 70, flush=True)
