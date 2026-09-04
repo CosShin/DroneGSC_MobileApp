@@ -1,11 +1,17 @@
 import React from 'react';
-import { Animated, StyleSheet, Text, View } from 'react-native';
 import {
-  PanGestureHandler,
-  PanGestureHandlerGestureEvent,
-  PanGestureHandlerStateChangeEvent,
-  State,
-} from 'react-native-gesture-handler';
+  Animated,
+  GestureResponderEvent,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import {
+  findTrackedTouch,
+  selectStartingTouch,
+  shouldReleaseTrackedTouch,
+  type JoystickTouchIdentifier,
+} from './JoystickTouchTracker';
 
 interface Props {
   size?: number;
@@ -13,12 +19,26 @@ interface Props {
   onUpdate: (x: number, y: number, active: boolean) => void;
 }
 
-export function VirtualJoystick({ size = 118, mode = 'PITCH_ROLL', onUpdate }: Props) {
+/**
+ * High-performance virtual flight joystick using direct native touch events.
+ *
+ * Each joystick instance owns its pointer independently via `touch.identifier`,
+ * allowing TRUE simultaneous two-finger multi-touch across left and right sticks
+ * on both iOS and Android without gesture cancellations or mutual exclusion.
+ */
+export function VirtualJoystick({
+  size = 118,
+  mode = 'PITCH_ROLL',
+  onUpdate,
+}: Props) {
   const pan = React.useRef(new Animated.ValueXY()).current;
   const onUpdateRef = React.useRef(onUpdate);
-  const position = React.useRef({ x: 0, y: 0 });
+  const startPos = React.useRef({ pageX: 0, pageY: 0 });
+  const currentPos = React.useRef({ x: 0, y: 0 });
+  const activeTouchId = React.useRef<JoystickTouchIdentifier | null>(null);
+  const isActive = React.useRef(false);
   const [isInteracting, setIsInteracting] = React.useState(false);
-  const active = React.useRef(false);
+
   const knobRadius = Math.max(24, size * 0.19);
   const maxTravel = Math.max(1, size * 0.5 - knobRadius - 9);
 
@@ -26,34 +46,20 @@ export function VirtualJoystick({ size = 118, mode = 'PITCH_ROLL', onUpdate }: P
     onUpdateRef.current = onUpdate;
   }, [onUpdate]);
 
-  const update = React.useCallback((dx: number, dy: number, isActive: boolean) => {
+  const update = React.useCallback((dx: number, dy: number, active: boolean) => {
     onUpdateRef.current(
       Math.max(-1, Math.min(1, dx / maxTravel)),
       Math.max(-1, Math.min(1, dy / maxTravel)),
-      isActive
+      active
     );
   }, [maxTravel]);
 
-  const onGesture = (event: PanGestureHandlerGestureEvent) => {
-    let dx = event.nativeEvent.translationX;
-    let dy = event.nativeEvent.translationY;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-
-    if (distance > maxTravel) {
-      dx = (dx / distance) * maxTravel;
-      dy = (dy / distance) * maxTravel;
-    }
-
-    pan.setValue({ x: dx, y: dy });
-    position.current = { x: dx, y: dy };
-    update(dx, dy, true);
-  };
-
   const release = React.useCallback(() => {
-    if (!active.current) return;
-    active.current = false;
+    if (!isActive.current) return;
+    isActive.current = false;
+    activeTouchId.current = null;
     setIsInteracting(false);
-    position.current = { x: 0, y: 0 };
+    currentPos.current = { x: 0, y: 0 };
     Animated.spring(pan, {
       toValue: { x: 0, y: 0 },
       useNativeDriver: true,
@@ -63,36 +69,71 @@ export function VirtualJoystick({ size = 118, mode = 'PITCH_ROLL', onUpdate }: P
     update(0, 0, false);
   }, [pan, update]);
 
-  const onState = (event: PanGestureHandlerStateChangeEvent) => {
-    const state = event.nativeEvent.state;
+  const handleTouchStart = React.useCallback((e: GestureResponderEvent) => {
+    const touch = selectStartingTouch(e.nativeEvent, activeTouchId.current);
+    if (!touch) return;
 
-    if (state === State.BEGAN) {
-      pan.stopAnimation();
-      pan.setValue({ x: 0, y: 0 });
-      position.current = { x: 0, y: 0 };
-      active.current = true;
-      setIsInteracting(true);
-      update(0, 0, true);
+    activeTouchId.current = touch.identifier;
+    startPos.current = { pageX: touch.pageX, pageY: touch.pageY };
+    pan.stopAnimation();
+    pan.setValue({ x: 0, y: 0 });
+    currentPos.current = { x: 0, y: 0 };
+    isActive.current = true;
+    setIsInteracting(true);
+    update(0, 0, true);
+  }, [pan, update]);
+
+  const handleTouchMove = React.useCallback((e: GestureResponderEvent) => {
+    if (!isActive.current || activeTouchId.current === null || activeTouchId.current === undefined) return;
+    const touch = findTrackedTouch(e.nativeEvent.touches, activeTouchId.current);
+
+    // CRITICAL FIX: NEVER fallback to touches[0]!
+    // If our tracked finger is not in this move event, this move belongs to another finger.
+    // We MUST ignore it!
+    if (!touch) return;
+
+    let dx = touch.pageX - startPos.current.pageX;
+    let dy = touch.pageY - startPos.current.pageY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance > maxTravel) {
+      dx = (dx / distance) * maxTravel;
+      dy = (dy / distance) * maxTravel;
     }
 
-    if (state === State.END || state === State.CANCELLED || state === State.FAILED) {
+    pan.setValue({ x: dx, y: dy });
+    currentPos.current = { x: dx, y: dy };
+    update(dx, dy, true);
+  }, [maxTravel, pan, update]);
+
+  const handleTouchEnd = React.useCallback((e: GestureResponderEvent) => {
+    if (!isActive.current || activeTouchId.current === null || activeTouchId.current === undefined) return;
+    if (shouldReleaseTrackedTouch(
+      e.nativeEvent.changedTouches,
+      e.nativeEvent.touches,
+      activeTouchId.current,
+    )) {
       release();
     }
-  };
+  }, [release]);
 
+  // Keep-alive timer while finger is held stationary
   React.useEffect(() => {
     if (!isInteracting) return;
-    // Gesture-handler may not emit MOVE events while a finger is held still.
-    // Refresh the processor timestamp so an intentional held command remains live.
     const keepAlive = setInterval(() => {
-      if (active.current) update(position.current.x, position.current.y, true);
+      if (isActive.current) {
+        update(currentPos.current.x, currentPos.current.y, true);
+      }
     }, 100);
     return () => clearInterval(keepAlive);
   }, [isInteracting, update]);
 
+  // Clean-up on unmount
   React.useEffect(() => {
     return () => {
-      if (active.current) onUpdateRef.current(0, 0, false);
+      if (isActive.current) {
+        onUpdateRef.current(0, 0, false);
+      }
     };
   }, []);
 
@@ -104,50 +145,48 @@ export function VirtualJoystick({ size = 118, mode = 'PITCH_ROLL', onUpdate }: P
 
   return (
     <View style={[styles.wrapper, isInteracting ? styles.wrapperActive : styles.wrapperIdle]}>
-      <PanGestureHandler
-        maxPointers={1}
-        minDist={0}
-        shouldCancelWhenOutside={false}
-        onGestureEvent={onGesture}
-        onHandlerStateChange={onState}
+      <View
+        accessible
+        accessibilityLabel={`${label} virtual joystick`}
+        hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
+        style={[
+          styles.base,
+          isInteracting && styles.baseActive,
+          { width: size, height: size, borderRadius: size / 2 },
+        ]}
       >
-        <View
-          accessible
-          accessibilityLabel={`${label} virtual joystick`}
+        <View style={[styles.touchHalo, { borderRadius: size / 2 }, isInteracting && { borderColor: accent }]} />
+        <View style={styles.verticalAxis} />
+        <View style={styles.horizontalAxis} />
+        <View style={[styles.deadzone, { borderColor: accentMuted }]} />
+        <Text pointerEvents="none" style={[styles.verticalAxisLabel, { color: accent }]}>{verticalAxis}</Text>
+        <Text pointerEvents="none" style={[styles.horizontalAxisLabel, { color: accent }]}>{horizontalAxis}</Text>
+
+        <Animated.View
+          pointerEvents="none"
           style={[
-            styles.base,
-            isInteracting && styles.baseActive,
-            { width: size, height: size, borderRadius: size / 2 },
+            styles.knob,
+            { borderColor: accent, shadowColor: accent },
+            {
+              width: knobRadius * 2,
+              height: knobRadius * 2,
+              borderRadius: knobRadius,
+              marginLeft: -knobRadius,
+              marginTop: -knobRadius,
+              transform: [{ translateX: pan.x }, { translateY: pan.y }],
+            },
           ]}
         >
-          <View style={[styles.touchHalo, { borderRadius: size / 2 }, isInteracting && { borderColor: accent }]} />
-          <View style={styles.verticalAxis} />
-          <View style={styles.horizontalAxis} />
-          <View style={[styles.deadzone, { borderColor: accentMuted }]} />
-          <Text pointerEvents="none" style={[styles.verticalAxisLabel, { color: accent }]}>{verticalAxis}</Text>
-          <Text pointerEvents="none" style={[styles.horizontalAxisLabel, { color: accent }]}>{horizontalAxis}</Text>
-
-          <Animated.View
-            style={[
-              styles.knob,
-              { borderColor: accent, shadowColor: accent },
-              {
-                width: knobRadius * 2,
-                height: knobRadius * 2,
-                borderRadius: knobRadius,
-                marginLeft: -knobRadius,
-                marginTop: -knobRadius,
-                transform: [{ translateX: pan.x }, { translateY: pan.y }],
-              },
-            ]}
-          >
-            <View style={[styles.knobInner, isInteracting && styles.knobInnerActive]}>
-              <View style={[styles.knobCore, { backgroundColor: accent }]} />
-              <View style={styles.knobHighlight} />
-            </View>
-          </Animated.View>
-        </View>
-      </PanGestureHandler>
+          <View style={[styles.knobInner, isInteracting && styles.knobInnerActive]}>
+            <View style={[styles.knobCore, { backgroundColor: accent }]} />
+            <View style={styles.knobHighlight} />
+          </View>
+        </Animated.View>
+      </View>
 
       <View style={[styles.labelPill, isInteracting && { borderColor: accentMuted }]}>
         <View style={[styles.labelDot, { backgroundColor: accent }]} />
@@ -186,7 +225,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.32)',
   },
   touchHalo: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     margin: 6,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.48)',

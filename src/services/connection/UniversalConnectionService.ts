@@ -38,7 +38,9 @@ export interface UniversalLinkState {
 }
 
 export interface UniversalTelemetryData {
-  latitude: number | null; longitude: number | null; altitude: number | null; speed: number | null; climb: number | null;
+  latitude: number | null; longitude: number | null; altitude: number | null;
+  altitudeMsl: number | null; relativeAltitude: number | null;
+  speed: number | null; climb: number | null;
   battery: number | null; mode: string; armed: boolean; timestamp: number;
   roll: number | null; pitch: number | null; yaw: number | null; heading: number | null;
   satellites: number | null; gpsFix: number | null; hdop: number | null;
@@ -56,7 +58,8 @@ type TelemetryListener = (data: UniversalTelemetryData) => void;
 type StatusListener = (status: UniversalConnectionStatus) => void;
 
 const emptyTelemetry = (): UniversalTelemetryData => ({
-  latitude: null, longitude: null, altitude: null, speed: null, climb: null, battery: null,
+  latitude: null, longitude: null, altitude: null, altitudeMsl: null, relativeAltitude: null,
+  speed: null, climb: null, battery: null,
   mode: 'UNKNOWN', armed: false, timestamp: 0, roll: null, pitch: null, yaw: null,
   heading: null, satellites: null, gpsFix: null, hdop: null, voltage: null, current: null,
   sensors: [], homeLatitude: null, homeLongitude: null, homeAltitude: null, homeUpdatedAt: null,
@@ -166,7 +169,7 @@ export class UniversalConnectionService {
     return this.missionService;
   }
 
-  private now() { return typeof global.performance?.now === 'function' ? global.performance.now() : Date.now(); }
+  private now() { return typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : Date.now(); }
 
   async configureMavlinkSigning(policy: MavlinkSigningPolicy, linkId: number) {
     if (this.status !== 'DISCONNECTED' && this.status !== 'ERROR') throw new Error('SIGNING_CHANGE_REQUIRES_DISCONNECT');
@@ -245,13 +248,6 @@ export class UniversalConnectionService {
             }
           : { url: config?.websocket?.url?.trim() };
     const transport = this.transportFactory(type);
-    const settings = type === 'WEBSOCKET'
-      ? config.websocket
-      : type === 'TCP'
-        ? config.tcp
-        : type === 'USB_SERIAL'
-          ? config.serial
-          : config.udp;
     this.heartbeatTimeoutMs = type === 'WEBSOCKET'
       ? config.websocket?.heartbeatTimeoutMs ?? 3000
       : type === 'TCP'
@@ -362,6 +358,7 @@ export class UniversalConnectionService {
   onStatusText(listener: (message: MavlinkStatusText) => void) { this.statusTextListeners.add(listener); return () => this.statusTextListeners.delete(listener); }
   onMavlinkPacket(listener: (event: MavlinkPacketEvent) => void) { return this.manager.onPacket(listener); }
   getMavlinkTrafficDiagnostics(): MavlinkTrafficDiagnostics { return this.manager.getTrafficDiagnostics(); }
+  getMavlinkSessionId() { return this.manager.getTrafficDiagnostics().sessionId; }
 
   sendMavlinkCommand(command: number, params: number[] = []) {
     if (!this.isVehicleFresh()) return Promise.reject(new Error('NO_FRESH_VEHICLE'));
@@ -420,7 +417,13 @@ export class UniversalConnectionService {
     const gpsStatusAt = raw.messageTimestamps[24] ?? 0;
     const gpsTimestamp = positionAt && gpsStatusAt ? Math.min(positionAt, gpsStatusAt) : positionAt || gpsStatusAt;
     this.state = {
-      latitude: raw.latitude, longitude: raw.longitude, altitude: raw.altitude, speed: raw.speed, climb: raw.climb,
+      latitude: raw.latitude,
+      longitude: raw.longitude,
+      altitude: raw.altitude,
+      altitudeMsl: raw.altitudeMsl,
+      relativeAltitude: raw.relativeAltitude,
+      speed: raw.speed,
+      climb: raw.climb,
       battery: raw.battery, mode: raw.mode, armed: raw.armed, timestamp: raw.receivedAt ?? 0,
       roll: raw.roll, pitch: raw.pitch, yaw: raw.yaw, heading: raw.heading,
       satellites: raw.satellites, gpsFix: raw.gpsFix, hdop: raw.hdop,

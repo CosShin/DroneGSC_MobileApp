@@ -16,31 +16,40 @@ import { OpenStreetMap, MapPosition } from './OpenStreetMap';
 import { HomeControlPanel } from './HomeControlPanel';
 import { SetHomeConfirmationModal } from './SetHomeConfirmationModal';
 import { useDeviceLocation } from '../../hooks/useDeviceLocation';
-import { selectIsArmed } from '../../store/drone/droneSlice';
-import { resolveSetHomeAltitudeMsl } from '../../services/home/HomeProtocol';
 import { isValidCoordinate } from '../../utils/geographic';
 import { glass, glassShadow, layers, radius, colors } from '../../theme/gcsTheme';
 import { GlassSurface } from '../gcs/GlassSurface';
+import { useTruthfulTelemetry } from '../../hooks/useTruthfulTelemetry';
+import { useFreshnessClock } from '../../hooks/useFreshnessClock';
+
+const VEHICLE_GPS_FRESH_MS = 5_000;
 
 /** Keeps the Leaflet WebView mounted even before GPS is available. */
-export const MapContainer = React.memo(function MapContainer() {
+interface Props {
+  active?: boolean;
+}
+
+export const MapContainer = React.memo(function MapContainer({ active = true }: Props) {
   const dispatch = useAppDispatch();
   const waypoints = useAppSelector(selectWaypoints);
   const device = useDeviceLocation();
   const gps = useAppSelector(selectGps);
-  const isArmed = useAppSelector(selectIsArmed);
+  const truth = useTruthfulTelemetry();
+  const now = useFreshnessClock();
   const yaw = useAppSelector(selectYaw);
   const home = useAppSelector(selectHomePosition);
   const isSelectingHome = useAppSelector(selectIsSelectingHomeOnMap);
   const previewHome = useAppSelector(selectHomePreviewPosition);
-  const altitudeMsl = resolveSetHomeAltitudeMsl(home?.altitude, gps?.value.altitude, isArmed);
 
   const [follow, setFollow] = React.useState(true);
   const [centerHomeTick, setCenterHomeTick] = React.useState(0);
   const [confirmModalVisible, setConfirmModalVisible] = React.useState(false);
 
   const vehiclePosition: MapPosition | null =
-    gps && (gps.value.gpsFix ?? 0) >= 3
+    truth.connected
+      && gps
+      && now - gps.timestamp <= VEHICLE_GPS_FRESH_MS
+      && (gps.value.gpsFix ?? 0) >= 3
       ? { latitude: gps.value.latitude, longitude: gps.value.longitude }
       : null;
 
@@ -61,7 +70,7 @@ export const MapContainer = React.memo(function MapContainer() {
     : null;
 
   const handleMapPress = (coord: MapPosition) => {
-    if (isSelectingHome && altitudeMsl != null && isValidCoordinate(coord?.latitude, coord?.longitude)) {
+    if (isSelectingHome && isValidCoordinate(coord?.latitude, coord?.longitude)) {
       dispatch(setSelectingOnMap(false));
       dispatch(setPreviewPosition(coord));
       dispatch(
@@ -73,7 +82,7 @@ export const MapContainer = React.memo(function MapContainer() {
             label: 'Selected Map Location',
             latitude: coord.latitude,
             longitude: coord.longitude,
-            altitude: altitudeMsl,
+            altitude: undefined,
           },
         }),
       );
@@ -89,11 +98,12 @@ export const MapContainer = React.memo(function MapContainer() {
   return (
     <View style={styles.container}>
       <OpenStreetMap
+        active={active}
         vehiclePosition={vehiclePosition}
         phonePosition={phonePosition}
         homePosition={homePosition}
         previewHomePosition={previewHomePosition}
-        yaw={yaw ?? 0}
+        yaw={vehiclePosition ? yaw ?? undefined : undefined}
         waypoints={waypoints}
         followVehicle={follow}
         centerHomeRequest={centerHomeTick}

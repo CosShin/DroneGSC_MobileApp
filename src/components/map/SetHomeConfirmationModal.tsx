@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View, ScrollView, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView, ActivityIndicator } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
@@ -12,6 +12,10 @@ import { selectGps } from '../../store/telemetry/telemetrySlice';
 import { homeService } from '../../services/home/HomeService';
 import { colors, glass, layers, radius } from '../../theme/gcsTheme';
 import { calculateDistanceMeters, formatDistance } from '../../utils/geographic';
+import { useTruthfulTelemetry } from '../../hooks/useTruthfulTelemetry';
+import { useFreshnessClock } from '../../hooks/useFreshnessClock';
+
+const VEHICLE_GPS_FRESH_MS = 5_000;
 
 interface Props {
   visible: boolean;
@@ -48,14 +52,32 @@ export function SetHomeConfirmationModal({ visible, onClose }: Props) {
   const currentHome = useAppSelector(selectHomePosition);
   const transaction = useAppSelector(selectHomeTransaction);
   const gps = useAppSelector(selectGps);
+  const truth = useTruthfulTelemetry();
+  const now = useFreshnessClock();
+  const [altitudeText, setAltitudeText] = React.useState('');
 
   const target = transaction.targetLocation;
+  React.useEffect(() => {
+    if (!visible || !target || target.source === 'VEHICLE') {
+      setAltitudeText('');
+      return;
+    }
+    setAltitudeText(target.altitude != null && Number.isFinite(target.altitude)
+      ? String(target.altitude)
+      : '');
+  }, [target, visible]);
+
   if (!visible || !target) return null;
 
   const vehicleLat = gps?.value?.latitude;
   const vehicleLon = gps?.value?.longitude;
 
-  const distFromVehicle = vehicleLat != null && vehicleLon != null && target.latitude != null && target.longitude != null
+  const hasFreshVehicleGps = truth.connected
+    && !!gps
+    && now - gps.timestamp <= VEHICLE_GPS_FRESH_MS
+    && (gps.value.gpsFix ?? 0) >= 3;
+  const distFromVehicle = hasFreshVehicleGps
+    && vehicleLat != null && vehicleLon != null && target.latitude != null && target.longitude != null
     && Number.isFinite(vehicleLat) && Number.isFinite(vehicleLon) && Number.isFinite(target.latitude) && Number.isFinite(target.longitude)
     ? calculateDistanceMeters(vehicleLat, vehicleLon, target.latitude, target.longitude)
     : null;
@@ -65,14 +87,16 @@ export function SetHomeConfirmationModal({ visible, onClose }: Props) {
     ? calculateDistanceMeters(currentHome.latitude, currentHome.longitude, target.latitude, target.longitude)
     : null;
 
-  const hasGpsFix = (gps?.value?.gpsFix ?? 0) >= 3;
+  const hasGpsFix = hasFreshVehicleGps;
   const isExtremelyFar = distFromVehicle != null && distFromVehicle > 50_000;
 
   const isSending = transaction.status === 'SENDING' || transaction.status === 'WAITING_ACK' || transaction.status === 'VERIFYING_HOME';
   const isSuccess = transaction.status === 'SUCCESS';
   const isFailed = transaction.status === 'FAILED';
+  const parsedAltitudeMsl = Number(altitudeText.trim().replace(',', '.'));
   const hasRequiredAltitude = target.source === 'VEHICLE'
-    || (target.altitude != null && Number.isFinite(target.altitude));
+    || (altitudeText.trim().length > 0 && Number.isFinite(parsedAltitudeMsl));
+  const canConfirm = truth.connected && hasGpsFix && hasRequiredAltitude;
 
   const handleConfirm = async () => {
     try {
@@ -83,13 +107,13 @@ export function SetHomeConfirmationModal({ visible, onClose }: Props) {
           latitude: target.latitude,
           longitude: target.longitude,
           accuracy: target.accuracy,
-          altitudeMsl: target.altitude,
+          altitudeMsl: parsedAltitudeMsl,
         });
       } else {
         await homeService.setHomeToLocation(
           target.latitude,
           target.longitude,
-          target.altitude,
+          parsedAltitudeMsl,
           target.label,
         );
       }
@@ -140,13 +164,19 @@ export function SetHomeConfirmationModal({ visible, onClose }: Props) {
           </View>
           <View style={styles.fieldRow}>
             <Text style={styles.fieldLabel}>Altitude (AMSL)</Text>
-            <Text style={styles.fieldValue}>
-              {target.source === 'VEHICLE'
-                ? 'Autopilot current position'
-                : target.altitude != null && Number.isFinite(target.altitude)
-                  ? `${target.altitude.toFixed(1)} m MSL`
-                  : 'Required'}
-            </Text>
+            {target.source === 'VEHICLE' ? (
+              <Text style={styles.fieldValue}>Autopilot current position</Text>
+            ) : (
+              <TextInput
+                accessibilityLabel="Home altitude above mean sea level"
+                value={altitudeText}
+                onChangeText={setAltitudeText}
+                keyboardType="decimal-pad"
+                placeholder="Required MSL metres"
+                placeholderTextColor={glass.textDim}
+                style={styles.altitudeInput}
+              />
+            )}
           </View>
           <View style={styles.divider} />
           <View style={styles.fieldRow}>
@@ -229,9 +259,9 @@ export function SetHomeConfirmationModal({ visible, onClose }: Props) {
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.btn, styles.confirmBtn, (isSending || !hasRequiredAltitude) && styles.btnDisabled]}
+              style={[styles.btn, styles.confirmBtn, (isSending || !canConfirm) && styles.btnDisabled]}
               onPress={handleConfirm}
-              disabled={isSending || isSuccess || !hasRequiredAltitude}
+              disabled={isSending || isSuccess || !canConfirm}
             >
               <Text style={styles.confirmText}>
                 {isSending ? 'SENDING...' : isSuccess ? 'CONFIRMED' : 'CONFIRM SET HOME'}
@@ -245,7 +275,7 @@ export function SetHomeConfirmationModal({ visible, onClose }: Props) {
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     backgroundColor: 'rgba(5, 10, 17, 0.75)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -254,7 +284,7 @@ const styles = StyleSheet.create({
     elevation: layers.critical + 20,
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
   },
   card: {
     width: '100%',
@@ -328,6 +358,19 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontWeight: '800',
     fontVariant: ['tabular-nums'],
+  },
+  altitudeInput: {
+    minWidth: 132,
+    height: 32,
+    paddingHorizontal: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(37, 134, 234, 0.35)',
+    backgroundColor: 'rgba(255, 255, 255, 0.72)',
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '800',
+    textAlign: 'right',
   },
   divider: {
     height: 1,

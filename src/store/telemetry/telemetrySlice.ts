@@ -9,7 +9,11 @@ export interface TelemetryValue<T> {
 export interface GpsData {
   latitude: number;
   longitude: number;
+  /** Height above the vehicle Home datum, in metres. */
   altitude: number;
+  /** Absolute altitude above mean sea level from GLOBAL_POSITION_INT.alt. */
+  altitudeMsl?: number | null;
+  relativeAltitude?: number | null;
   satellites: number | null;
   hdop: number | null;
   gpsFix: number | null;
@@ -107,7 +111,8 @@ export const telemetrySlice = createSlice({
       if (gps) {
         const current = state.gps?.value;
         if (!current || current.latitude !== gps.latitude || current.longitude !== gps.longitude ||
-            current.altitude !== gps.altitude || current.satellites !== gps.satellites ||
+            current.altitude !== gps.altitude || current.altitudeMsl !== gps.altitudeMsl ||
+            current.relativeAltitude !== gps.relativeAltitude || current.satellites !== gps.satellites ||
             current.gpsFix !== gps.gpsFix || current.hdop !== gps.hdop) {
           state.gps = { value: gps, timestamp: gpsTimestamp };
         } else {
@@ -161,9 +166,9 @@ export const selectTelemetryStale = (state: RootState) => state.telemetry.stale;
 export const selectStatusTexts = (state: RootState) => state.telemetry.statusTexts;
 
 // Micro selectors for high-frequency data to prevent large component re-renders
-export const selectRoll = (state: RootState) => state.telemetry.attitude?.value.roll ?? 0;
-export const selectPitch = (state: RootState) => state.telemetry.attitude?.value.pitch ?? 0;
-export const selectYaw = (state: RootState) => state.telemetry.attitude?.value.yaw ?? 0;
+export const selectRoll = (state: RootState) => state.telemetry.attitude?.value.roll ?? null;
+export const selectPitch = (state: RootState) => state.telemetry.attitude?.value.pitch ?? null;
+export const selectYaw = (state: RootState) => state.telemetry.attitude?.value.yaw ?? null;
 export const selectAltitude = (state: RootState) => state.telemetry.gps?.value.altitude ?? null;
 export const selectGroundSpeed = (state: RootState) => state.telemetry.velocity?.value.groundSpeed ?? null;
 export const selectVerticalSpeed = (state: RootState) => state.telemetry.velocity?.value.verticalSpeed ?? null;

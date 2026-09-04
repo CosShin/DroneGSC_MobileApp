@@ -10,13 +10,14 @@ import {
   setHomeTransaction,
 } from '../../store/home/homeSlice';
 import { selectGps } from '../../store/telemetry/telemetrySlice';
-import { selectIsConnected } from '../../store/connection/connectionSlice';
-import { selectIsArmed } from '../../store/drone/droneSlice';
 import { GlassSurface } from '../gcs/GlassSurface';
 import { colors, glass, glassShadow, layers, radius, spacing } from '../../theme/gcsTheme';
 import { calculateBearingDegrees, calculateDistanceMeters, formatBearing, formatDistance, isValidCoordinate } from '../../utils/geographic';
-import { resolveSetHomeAltitudeMsl } from '../../services/home/HomeProtocol';
 import { useGcsLayout } from '../../hooks/useGcsLayout';
+import { useTruthfulTelemetry } from '../../hooks/useTruthfulTelemetry';
+import { useFreshnessClock } from '../../hooks/useFreshnessClock';
+
+const VEHICLE_GPS_FRESH_MS = 5_000;
 
 interface Props {
   phonePosition?: { latitude: number; longitude: number; accuracy?: number | null } | null;
@@ -31,18 +32,21 @@ export function HomeControlPanel({ phonePosition, onCenterHome, onOpenConfirmMod
   const homeStatus = useAppSelector(selectHomeStatus);
   const home = useAppSelector(selectHomePosition);
   const isSelectingOnMap = useAppSelector(selectIsSelectingHomeOnMap);
-  const isConnected = useAppSelector(selectIsConnected);
-  const isArmed = useAppSelector(selectIsArmed);
   const gps = useAppSelector(selectGps);
+  const truth = useTruthfulTelemetry();
+  const now = useFreshnessClock();
 
   const vehicleLat = gps?.value?.latitude;
   const vehicleLon = gps?.value?.longitude;
-  const hasVehiclePosition = (gps?.value?.gpsFix ?? 0) >= 3 && isValidCoordinate(vehicleLat, vehicleLon);
-  const altitudeMsl = resolveSetHomeAltitudeMsl(home?.altitude, gps?.value?.altitude, isArmed);
+  const hasVehiclePosition = truth.connected
+    && !!gps
+    && now - gps.timestamp <= VEHICLE_GPS_FRESH_MS
+    && (gps.value.gpsFix ?? 0) >= 3
+    && isValidCoordinate(vehicleLat, vehicleLon);
   const hasUsablePhonePosition = !!phonePosition
+    && truth.connected
     && isValidCoordinate(phonePosition.latitude, phonePosition.longitude)
-    && (phonePosition.accuracy == null || phonePosition.accuracy <= 50)
-    && altitudeMsl !== null;
+    && (phonePosition.accuracy == null || phonePosition.accuracy <= 50);
   const isHomeSet = homeStatus === 'SET' && home != null && isValidCoordinate(home.latitude, home.longitude);
 
   const distance = isHomeSet && hasVehiclePosition && vehicleLat != null && vehicleLon != null && home != null
@@ -54,7 +58,7 @@ export function HomeControlPanel({ phonePosition, onCenterHome, onOpenConfirmMod
     : null;
 
   const handleSetToVehicle = () => {
-    if (!isConnected || !hasVehiclePosition || vehicleLat == null || vehicleLon == null) return;
+    if (!truth.connected || !hasVehiclePosition || vehicleLat == null || vehicleLon == null) return;
     dispatch(
       setHomeTransaction({
         status: 'CONFIRMING',
@@ -64,7 +68,9 @@ export function HomeControlPanel({ phonePosition, onCenterHome, onOpenConfirmMod
           label: 'Vehicle Current Position',
           latitude: vehicleLat,
           longitude: vehicleLon,
-          altitude: gps?.value?.altitude != null && Number.isFinite(gps.value.altitude) ? gps.value.altitude : undefined,
+          altitude: gps?.value?.altitudeMsl != null && Number.isFinite(gps.value.altitudeMsl)
+            ? gps.value.altitudeMsl
+            : undefined,
         },
       }),
     );
@@ -73,13 +79,13 @@ export function HomeControlPanel({ phonePosition, onCenterHome, onOpenConfirmMod
   };
 
   const handleToggleSelectOnMap = () => {
-    if (!isConnected || altitudeMsl == null) return;
+    if (!truth.connected) return;
     dispatch(setSelectingOnMap(!isSelectingOnMap));
     setExpanded(false);
   };
 
   const handleSetToPhone = () => {
-    if (!hasUsablePhonePosition || !phonePosition || !isValidCoordinate(phonePosition.latitude, phonePosition.longitude) || altitudeMsl == null) return;
+    if (!hasUsablePhonePosition || !phonePosition || !isValidCoordinate(phonePosition.latitude, phonePosition.longitude)) return;
     dispatch(
       setHomeTransaction({
         status: 'CONFIRMING',
@@ -89,7 +95,7 @@ export function HomeControlPanel({ phonePosition, onCenterHome, onOpenConfirmMod
           label: 'Phone / GCS Location',
           latitude: phonePosition.latitude,
           longitude: phonePosition.longitude,
-          altitude: altitudeMsl,
+          altitude: undefined,
           accuracy: phonePosition.accuracy,
         },
       }),
@@ -201,8 +207,8 @@ export function HomeControlPanel({ phonePosition, onCenterHome, onOpenConfirmMod
               ) : null}
 
               <TouchableOpacity
-                style={[styles.actionBtn, (!isConnected || !hasVehiclePosition) && styles.actionBtnDisabled]}
-                disabled={!isConnected || !hasVehiclePosition}
+                style={[styles.actionBtn, (!truth.connected || !hasVehiclePosition) && styles.actionBtnDisabled]}
+                disabled={!truth.connected || !hasVehiclePosition}
                 onPress={handleSetToVehicle}
               >
                 <MaterialCommunityIcons name="quadcopter" size={13} color={colors.primary} />
@@ -213,9 +219,9 @@ export function HomeControlPanel({ phonePosition, onCenterHome, onOpenConfirmMod
                 style={[
                   styles.actionBtn,
                   isSelectingOnMap && styles.actionBtnActive,
-                  (!isConnected || altitudeMsl == null) && styles.actionBtnDisabled,
+                  !truth.connected && styles.actionBtnDisabled,
                 ]}
-                disabled={!isConnected || altitudeMsl == null}
+                disabled={!truth.connected}
                 onPress={handleToggleSelectOnMap}
               >
                 <MaterialCommunityIcons

@@ -1,6 +1,6 @@
-# MediaMTX WebRTC video (Expo SDK 54)
+# MediaMTX WebRTC video (Expo SDK 57)
 
-ANITECH GCS uses the MediaMTX browser player inside `react-native-webview`. The main app is Expo SDK 54 and already uses the Expo-compatible `react-native-webview` 13.15.0. Video and MAVLink have independent state and lifecycle.
+ANITECH GCS uses the MediaMTX browser player inside `react-native-webview`. The main app is Expo SDK 57 and uses the Expo-compatible `react-native-webview` 13.16.1. Video and MAVLink have independent state and lifecycle.
 
 ## Raspberry Pi / MediaMTX
 
@@ -33,7 +33,7 @@ Publish browser-compatible H.264 with no B-frames. Baseline plus low-latency enc
 1. Start MediaMTX and publish the configured stream path.
 2. On the iPhone, open Safari and visit `http://PI_IP:8889/landing-cam`.
 3. Do not debug React Native until Safari plays the stream.
-4. Run `npx expo start --go`, open the SDK 54 project in Expo Go, then select **Settings → Video**.
+4. Sign in to the same Expo account in Expo CLI and Expo Go on iOS, run `npx expo start --go`, open the SDK 57 project, then select **Settings → Video**. Login is not required when using a development build.
 5. Enter scheme, Pi host, port 8889 and stream path; use **Open URL** to repeat the browser test and **Test in App** for WebView.
 6. Stop MediaMTX to verify the non-blocking error/reconnect flow, then restart it.
 

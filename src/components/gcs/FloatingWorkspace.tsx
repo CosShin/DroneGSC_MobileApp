@@ -103,14 +103,14 @@ export function FloatingWorkspace({
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     zIndex: layers.workspace,
     elevation: layers.workspace,
     justifyContent: 'center',
     alignItems: 'center',
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     backgroundColor: 'rgba(15, 25, 40, 0.32)',
   },
   panel: {

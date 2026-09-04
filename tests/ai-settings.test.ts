@@ -7,6 +7,10 @@ import settingsReducer, {
   updateAiSettings,
 } from '../src/store/settings/settingsSlice';
 import { DEFAULT_AI_CONFIG, SUPPORTED_AI_MODELS, getModelMetadata } from '../src/settings/defaults/ai';
+import { DEFAULT_PI_CONFIG } from '../src/settings/defaults/pi';
+import { DEFAULT_CAMERA_CONFIG } from '../src/settings/defaults/camera';
+import { DEFAULT_TELEMETRY_CONFIG } from '../src/settings/defaults/telemetry';
+import { DEFAULT_JOYSTICK_CONFIG } from '../src/settings/defaults/joystick';
 
 test('settingsSlice initializes with DEFAULT_AI_CONFIG including fallback and voice defaults', () => {
   const store = configureStore({
@@ -113,4 +117,25 @@ test('settingsSlice hydrateSettings merges incoming AI configuration backwards-c
   assert.equal(ai.fallbackModel, 'qwen3.5:9b');
   assert.equal(ai.speechPitch, 1.0);
   assert.equal(ai.voiceIdentifier, null);
+});
+
+test('settings hydration deep-merges every persisted subsystem and marks startup ready', () => {
+  const store = configureStore({ reducer: { settings: settingsReducer } });
+  store.dispatch(hydrateSettings({
+    piGateway: { gatewayIp: '10.1.2.3' } as any,
+    camera: { zoomLevel: 2 } as any,
+    telemetry: { gpsUpdateRateHz: 2 } as any,
+    joystick: { deadzone: 0.2 } as any,
+  }));
+
+  const settings = store.getState().settings;
+  assert.equal(settings.hydrated, true);
+  assert.equal(settings.piGateway.gatewayIp, '10.1.2.3');
+  assert.equal(settings.piGateway.mavlinkPort, DEFAULT_PI_CONFIG.mavlinkPort);
+  assert.equal(settings.camera.zoomLevel, 2);
+  assert.equal(settings.camera.focusMode, DEFAULT_CAMERA_CONFIG.focusMode);
+  assert.equal(settings.telemetry.gpsUpdateRateHz, 2);
+  assert.equal(settings.telemetry.attitudeUpdateRateHz, DEFAULT_TELEMETRY_CONFIG.attitudeUpdateRateHz);
+  assert.equal(settings.joystick.deadzone, 0.2);
+  assert.equal(settings.joystick.updateRateHz, DEFAULT_JOYSTICK_CONFIG.updateRateHz);
 });

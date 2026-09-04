@@ -7,12 +7,12 @@ import {
 import { safetyLayer } from '../command/SafetyLayer';
 import { universalConnectionService } from '../connection/UniversalConnectionService';
 import { calculateDistanceMeters, isValidCoordinate } from '../../utils/geographic';
-import { resolveSetHomeAltitudeMsl } from './HomeProtocol';
 
 const HOME_CONFIRMATION_TIMEOUT_MS = 6_000;
 const HOME_HORIZONTAL_TOLERANCE_METERS = 15;
 const HOME_ALTITUDE_TOLERANCE_METERS = 2;
 const CURRENT_POSITION_ALTITUDE_TOLERANCE_METERS = 10;
+const VEHICLE_GPS_FRESH_MS = 5_000;
 
 interface ExpectedHomePosition {
   latitude: number;
@@ -27,10 +27,11 @@ class HomeService {
     const state = store.getState();
     const gps = state.telemetry.gps;
 
-    if (state.connection.status !== 'CONNECTED') {
+    if (!universalConnectionService.isVehicleFresh()) {
       return this.fail('Vehicle is not connected.');
     }
     if (!gps
+      || Date.now() - gps.timestamp > VEHICLE_GPS_FRESH_MS
       || !isValidCoordinate(gps.value.latitude, gps.value.longitude)
       || (gps.value.gpsFix ?? 0) < 3) {
       return this.fail('A fresh vehicle 3D GPS position is required to verify Home.');
@@ -39,7 +40,9 @@ class HomeService {
     const expected: ExpectedHomePosition = {
       latitude: gps.value.latitude,
       longitude: gps.value.longitude,
-      altitude: Number.isFinite(gps.value.altitude) ? gps.value.altitude : undefined,
+      altitude: gps.value.altitudeMsl != null && Number.isFinite(gps.value.altitudeMsl)
+        ? gps.value.altitudeMsl
+        : undefined,
       altitudeToleranceMeters: CURRENT_POSITION_ALTITUDE_TOLERANCE_METERS,
     };
     const targetLocation: HomeTargetLocation = {
@@ -68,7 +71,7 @@ class HomeService {
     if (altitudeMsl == null || !Number.isFinite(altitudeMsl)) {
       return this.fail('A valid absolute MSL altitude is required to set Home.');
     }
-    if (store.getState().connection.status !== 'CONNECTED') {
+    if (!universalConnectionService.isVehicleFresh()) {
       return this.fail('Vehicle is not connected.');
     }
 
@@ -101,15 +104,10 @@ class HomeService {
       return this.fail(`Phone GPS accuracy is too low (±${Math.round(phonePosition.accuracy)}m).`);
     }
 
-    const state = store.getState();
     const resolvedAltitude = phonePosition.altitudeMsl != null
       && Number.isFinite(phonePosition.altitudeMsl)
       ? phonePosition.altitudeMsl
-      : resolveSetHomeAltitudeMsl(
-          state.home.position?.altitude,
-          state.telemetry.gps?.value.altitude,
-          state.drone.armed,
-        );
+      : null;
     if (resolvedAltitude == null) {
       return this.fail('Phone Home requires a confirmed MSL altitude from the vehicle.');
     }
@@ -172,7 +170,7 @@ class HomeService {
         resolve(value);
       };
       const interval = setInterval(() => {
-        if (store.getState().connection.status !== 'CONNECTED') {
+        if (!universalConnectionService.isVehicleFresh()) {
           finish(false);
           return;
         }

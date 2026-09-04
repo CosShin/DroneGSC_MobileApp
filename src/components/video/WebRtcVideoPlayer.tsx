@@ -158,7 +158,13 @@ export const WebRtcVideoPlayer = React.memo(function WebRtcVideoPlayer({
         scrollEnabled={false}
         bounces={false}
       />
-      {stream.runtime.status === 'ERROR' || stream.runtime.status === 'OFFLINE' || (stream.runtime.status === 'RECONNECTING' && stream.runtime.lastError) ? <VideoErrorState message={stream.runtime.lastError ?? 'MediaMTX is not reachable.'} onRetry={stream.retry}/> : null}
+      {stream.runtime.status !== 'LIVE' ? (
+        <VideoErrorState
+          connecting={stream.runtime.status === 'IDLE' || stream.runtime.status === 'CONNECTING' || (stream.runtime.status === 'RECONNECTING' && !stream.runtime.lastError)}
+          message={stream.runtime.lastError ?? (stream.runtime.status === 'RECONNECTING' ? `Reconnecting to MediaMTX (attempt ${stream.runtime.reconnectAttempt})…` : 'Waiting for a live video stream from the Raspberry Pi…')}
+          onRetry={stream.runtime.status === 'ERROR' || stream.runtime.status === 'OFFLINE' || stream.runtime.status === 'RECONNECTING' ? stream.retry : undefined}
+        />
+      ) : null}
       {onOpenFullscreen ? <TouchableOpacity accessibilityLabel="Open fullscreen video" style={styles.fullscreen} onPress={onOpenFullscreen}><MaterialCommunityIcons name="fullscreen" size={22} color="#fff"/></TouchableOpacity> : null}
     </View>
   );

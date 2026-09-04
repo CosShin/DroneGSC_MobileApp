@@ -4,7 +4,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { DiagnosticsOverlay } from '../../components/common/DiagnosticsOverlay';
 import { WarningBanner } from '../../components/common/WarningBanner';
 import { CommandButton } from '../../components/gcs/Primitives';
-import { VirtualJoystick } from '../../components/joystick/VirtualJoystick';
+import { DualJoystickController } from '../../components/joystick/DualJoystickController';
 import { joystickProcessor } from '../../services/joystick/JoystickProcessor';
 import { FlyMainViewport } from '../../components/flight/FlyMainViewport';
 import { CompactFlightHud } from '../../components/hud/CompactFlightHud';
@@ -15,8 +15,6 @@ import {
   selectShowJoysticks,
   selectVideoSettings,
   setAutomaticFlightDisplay,
-  setFlightDisplayMode,
-  setPrimaryFlyView,
   setAiAssistantOpen,
 } from '../../store/settings/settingsSlice';
 import { FlightAssistantButton } from '../../components/ai/FlightAssistantButton';
@@ -83,14 +81,14 @@ export function FlyScreen() {
     if (videoRuntime.status === 'LIVE') {
       videoWasLive.current = true;
       if (displayMode !== 'VIDEO') {
-        dispatch(setFlightDisplayMode('VIDEO'));
+        dispatch(setAutomaticFlightDisplay('VIDEO'));
       }
       return;
     }
     if (displayMode !== 'HUD') {
       const reconnecting = videoRuntime.status === 'CONNECTING' || videoRuntime.status === 'RECONNECTING';
       const timeout = setTimeout(() => {
-        dispatch(setFlightDisplayMode('HUD'));
+        dispatch(setAutomaticFlightDisplay('HUD'));
         if (videoWasLive.current) {
           showDisplayNotice('Video offline — HUD active');
         }
@@ -136,24 +134,14 @@ export function FlyScreen() {
       {/* 2. Safety Warnings / PreArm Alert Banner (Positioned cleanly at top center) */}
       <WarningBanner />
 
-      {/* 3. Virtual Joysticks (rendered in lower left / lower right matching reference) */}
+      {/* 3. Virtual Joysticks (coordinated simultaneous dual multi-touch) */}
       {showSticks && truth.connected && primaryView === 'FLIGHT' ? (
-        <View style={styles.controlsLayer} pointerEvents="box-none">
-          <View style={[styles.leftStick, layout.isCompactLandscape && styles.leftStickCompact]} pointerEvents="auto">
-            <VirtualJoystick
-              size={stickSize}
-              mode="THROTTLE_YAW"
-              onUpdate={(x, y, active) => joystickProcessor.updateLeftStick(x, y, active)}
-            />
-          </View>
-          <View style={[styles.rightStick, layout.isCompactLandscape && styles.rightStickCompact]} pointerEvents="auto">
-            <VirtualJoystick
-              size={stickSize}
-              mode="PITCH_ROLL"
-              onUpdate={(x, y, active) => joystickProcessor.updateRightStick(x, y, active)}
-            />
-          </View>
-        </View>
+        <DualJoystickController
+          size={stickSize}
+          isCompactLandscape={layout.isCompactLandscape}
+          onUpdateLeft={(x, y, active) => joystickProcessor.updateLeftStick(x, y, active)}
+          onUpdateRight={(x, y, active) => joystickProcessor.updateRightStick(x, y, active)}
+        />
       ) : null}
 
       {/* Compact FPV instruments stay readable over video without stealing touch input. */}
@@ -234,7 +222,7 @@ export function FlyScreen() {
           <TouchableOpacity
             accessibilityLabel="Close flight mode menu"
             activeOpacity={1}
-            style={StyleSheet.absoluteFillObject}
+            style={StyleSheet.absoluteFill}
             onPress={() => setModeSheet(false)}
           />
           <View style={styles.sheetCard}>
@@ -301,26 +289,6 @@ const styles = StyleSheet.create({
     minHeight: 0,
     backgroundColor: '#EDF4FB',
     overflow: 'hidden',
-  },
-  controlsLayer: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: layers.controls,
-  },
-  leftStick: {
-    position: 'absolute',
-    left: 20,
-    bottom: 18,
-  },
-  rightStick: {
-    position: 'absolute',
-    right: 20,
-    bottom: 18,
-  },
-  leftStickCompact: {
-    left: 10,
-  },
-  rightStickCompact: {
-    right: 10,
   },
   modeQuickAction: {
     position: 'absolute',
@@ -409,7 +377,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
   },
   modeOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     zIndex: layers.modal,
     elevation: layers.modal,
     backgroundColor: 'rgba(15, 25, 40, 0.40)',

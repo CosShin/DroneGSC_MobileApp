@@ -10,5 +10,11 @@ export interface FlightControlInput {
   pitch: number;
   yaw: number;
   throttle: number;
+  validAxes: {
+    roll: boolean;
+    pitch: boolean;
+    yaw: boolean;
+    throttle: boolean;
+  };
   timestamp: number;
 }

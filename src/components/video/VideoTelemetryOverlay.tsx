@@ -2,21 +2,30 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useAppSelector } from '../../store/hooks';
 import { selectDroneMode, selectIsArmed } from '../../store/drone/droneSlice';
-import { selectAltitude, selectBatteryPercentage, selectGps, selectGpsFix, selectGroundSpeed, selectSatellites } from '../../store/telemetry/telemetrySlice';
+import { selectBattery, selectGps, selectVelocity } from '../../store/telemetry/telemetrySlice';
 import { selectHomePosition } from '../../store/home/homeSlice';
 import { calculateDistanceMeters, formatDistance, isValidCoordinate } from '../../utils/geographic';
 import { glass, glassShadow, radius } from '../../theme/gcsTheme';
+import { useTruthfulTelemetry } from '../../hooks/useTruthfulTelemetry';
+import { useFreshnessClock } from '../../hooks/useFreshnessClock';
+
+const GPS_FRESH_MS = 5_000;
+const VELOCITY_FRESH_MS = 3_000;
+const BATTERY_FRESH_MS = 30_000;
 
 export const VideoTelemetryOverlay = React.memo(function VideoTelemetryOverlay() {
   const mode = useAppSelector(selectDroneMode);
   const armed = useAppSelector(selectIsArmed);
-  const altitude = useAppSelector(selectAltitude);
-  const speed = useAppSelector(selectGroundSpeed);
-  const battery = useAppSelector(selectBatteryPercentage);
-  const satellites = useAppSelector(selectSatellites);
-  const gpsFix = useAppSelector(selectGpsFix);
   const gps = useAppSelector(selectGps);
+  const velocity = useAppSelector(selectVelocity);
+  const battery = useAppSelector(selectBattery);
   const home = useAppSelector(selectHomePosition);
+  const truth = useTruthfulTelemetry();
+  const now = useFreshnessClock();
+  const gpsFresh = truth.connected && !!gps && now - gps.timestamp <= GPS_FRESH_MS;
+  const velocityFresh = truth.connected && !!velocity && now - velocity.timestamp <= VELOCITY_FRESH_MS;
+  const batteryFresh = truth.connected && !!battery && now - battery.timestamp <= BATTERY_FRESH_MS;
+  const gpsFix = gpsFresh ? gps.value.gpsFix : null;
 
   const homeDistance = home
     && (gpsFix ?? 0) >= 3
@@ -26,13 +35,13 @@ export const VideoTelemetryOverlay = React.memo(function VideoTelemetryOverlay()
 
   return (
     <View pointerEvents="none" style={styles.overlay}>
-      <Metric label="MODE" value={mode || '--'} />
-      <Metric label="ARM" value={armed ? 'ARMED' : 'DISARMED'} tone={armed ? 'success' : 'danger'} />
-      <Metric label="ALT" value={altitude == null ? '--' : `${altitude.toFixed(1)} m`} />
-      <Metric label="GS" value={speed == null ? '--' : `${speed.toFixed(1)} m/s`} />
+      <Metric label="MODE" value={truth.connected && mode !== 'UNKNOWN' ? mode : '--'} />
+      <Metric label="ARM" value={!truth.connected ? '--' : armed ? 'ARMED' : 'DISARMED'} tone={!truth.connected ? undefined : armed ? 'success' : 'danger'} />
+      <Metric label="ALT" value={!gpsFresh ? '--' : `${gps.value.altitude.toFixed(1)} m`} />
+      <Metric label="GS" value={!velocityFresh ? '--' : `${velocity.value.groundSpeed.toFixed(1)} m/s`} />
       <Metric label="HOME" value={formatDistance(homeDistance)} />
-      <Metric label="GPS" value={satellites == null ? '--' : `${satellites} sats · ${gpsFix ?? '--'}`} />
-      <Metric label="BAT" value={battery == null ? '--' : `${Math.round(battery)}%`} tone={battery != null && battery < 20 ? 'danger' : undefined} />
+      <Metric label="GPS" value={!gpsFresh ? '--' : `${gps.value.satellites ?? '--'} sats · ${gpsFix ?? '--'}`} />
+      <Metric label="BAT" value={!batteryFresh ? '--' : `${Math.round(battery.value.percentage)}%`} tone={batteryFresh && battery.value.percentage < 20 ? 'danger' : undefined} />
     </View>
   );
 });

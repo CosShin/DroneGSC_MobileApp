@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
-import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
+import { NavigationContainer, StackActions, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlyScreen } from '../screens/FlyScreen';
@@ -33,7 +33,13 @@ export function RootNavigator() {
   
   const navigate = React.useCallback((name: MainRouteName) => {
     setRoute(name);
-    if (ref.isReady()) ref.navigate(name);
+    if (!ref.isReady() || ref.getCurrentRoute()?.name === name) return;
+    const targetExists = ref.getRootState()?.routes.some(existing => existing.name === name);
+    if (ref.getCurrentRoute()?.name === 'Video' && !targetExists) {
+      ref.dispatch(StackActions.replace(name));
+      return;
+    }
+    ref.navigate(name, undefined, { pop: true });
   }, [ref]);
 
   const showTelemetryHUD = route === 'Fly' || route === 'Plan';
@@ -94,7 +100,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent' 
   },
   globalOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     zIndex: layers.brand,
     elevation: layers.brand,
   },

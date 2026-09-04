@@ -13,8 +13,11 @@ class MissionManagerHarness {
   countSends = 0;
   respondAfterCountAttempt = 1;
   ackType = 0;
+  requestTargetSystem = 255;
   private listeners = new Set<MissionListener>();
 
+  getSessionId() { return 1; }
+  getState() { return { systemId: 1 }; }
   getVehicleTarget() { return { systemId: 1, componentId: 1 }; }
   onMissionFrame(listener: MissionListener) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
 
@@ -23,7 +26,7 @@ class MissionManagerHarness {
     if (messageId === 44) {
       this.countSends++;
       if (this.countSends >= this.respondAfterCountAttempt) {
-        queueMicrotask(() => this.emit(51, Uint8Array.of(0, 0, 255, 190)));
+        queueMicrotask(() => this.emit(51, Uint8Array.of(0, 0, this.requestTargetSystem, 190)));
       }
     } else if (messageId === 73) {
       const ack = this.ackType === 0
@@ -95,4 +98,15 @@ test('mission upload reports a named autopilot rejection', async () => {
   const service = new MavlinkMissionService(harness as unknown as MavlinkManager, { responseTimeoutMs: 20, maxRetries: 1 });
 
   await assert.rejects(service.upload([testItem]), /MISSION_ACK_REJECTED/);
+});
+
+test('mission upload ignores requests addressed to another GCS', async () => {
+  const harness = new MissionManagerHarness();
+  harness.requestTargetSystem = 42;
+  const service = new MavlinkMissionService(harness as unknown as MavlinkManager, { responseTimeoutMs: 5, maxRetries: 1 });
+
+  await assert.rejects(service.upload([testItem]), /MISSION_TIMEOUT/);
+  assert.equal(harness.sent.some(frame => frame.messageId === 73), false);
+  assert.equal(harness.sent.at(-1)?.messageId, 47, 'timeout should cancel the mission transaction');
+  assert.equal(harness.sent.at(-1)?.payload[2], 15, 'MAV_MISSION_OPERATION_CANCELLED must be explicit');
 });

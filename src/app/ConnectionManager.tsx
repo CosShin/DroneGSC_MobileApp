@@ -1,7 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { universalConnectionService, UniversalTelemetryData } from '../services/connection/UniversalConnectionService';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { selectConnectionConfig, selectMavlinkSettings } from '../store/settings/settingsSlice';
+import {
+  selectConnectionConfig,
+  selectMavlinkSettings,
+  selectSettingsHydrated,
+} from '../store/settings/settingsSlice';
 import {
   setStatus, setHeartbeat, setLatency, updateTrafficStats, setDetectedVehicle,
   setLinkState, setPacketsLost, setActiveConnectionInfo,
@@ -21,8 +25,8 @@ export function ConnectionManager() {
   const dispatch = useAppDispatch();
   const connectionConfig = useAppSelector(selectConnectionConfig);
   const mavlinkSettings = useAppSelector(selectMavlinkSettings);
-  const initialConfig = useRef(connectionConfig);
-  const initialMavlinkSettings = useRef(mavlinkSettings);
+  const settingsHydrated = useAppSelector(selectSettingsHydrated);
+  const autoConnectStarted = useRef(false);
 
   useEffect(() => {
     // Start continuous AI Flight Supervisor monitoring
@@ -91,7 +95,16 @@ export function ConnectionManager() {
             ? { roll: data.roll, pitch: data.pitch, yaw: data.yaw }
             : null,
           gps: data.latitude !== null && data.longitude !== null && data.altitude !== null
-            ? { latitude: data.latitude, longitude: data.longitude, altitude: data.altitude, satellites: data.satellites, hdop: data.hdop, gpsFix: data.gpsFix }
+            ? {
+                latitude: data.latitude,
+                longitude: data.longitude,
+                altitude: data.altitude,
+                altitudeMsl: data.altitudeMsl,
+                relativeAltitude: data.relativeAltitude,
+                satellites: data.satellites,
+                hdop: data.hdop,
+                gpsFix: data.gpsFix,
+              }
             : null,
           velocity: data.speed !== null
             ? { groundSpeed: data.speed, verticalSpeed: data.climb, velocityX: null, velocityY: null, velocityZ: null }
@@ -159,29 +172,6 @@ export function ConnectionManager() {
       dispatch(addStatusText({ severity: message.severity, text: message.text, timestamp: message.receivedAt }));
     });
 
-    const shouldAutoConnect = initialConfig.current.type === 'WEBSOCKET'
-      ? initialConfig.current.websocket.autoConnect
-      : initialConfig.current.type === 'UDP'
-        ? initialConfig.current.udp.autoConnect
-        : initialConfig.current.type === 'TCP' && initialConfig.current.tcp.autoConnect;
-    if (shouldAutoConnect) {
-      const config = initialConfig.current;
-      dispatch(setActiveConnectionInfo({
-        type: config.type,
-        portInfo: config.type === 'WEBSOCKET'
-          ? config.websocket.url
-          : config.type === 'TCP'
-            ? `TCP: ${config.tcp.host}:${config.tcp.port}`
-            : `UDP: ${config.udp.localPort}`,
-      }));
-      void universalConnectionService.configureMavlinkSigning(
-        initialMavlinkSettings.current.signingPolicy,
-        initialMavlinkSettings.current.signingLinkId,
-      ).then(() => universalConnectionService.connect(initialConfig.current)).catch(error => {
-        console.warn('[MAVLink signing configuration]', error instanceof Error ? error.message : 'Unable to configure signing');
-      });
-    }
-
     return () => {
       aiFlightSupervisor.stop();
       unsubscribeStatus();
@@ -193,6 +183,38 @@ export function ConnectionManager() {
       universalConnectionService.disconnect();
     };
   }, [dispatch]);
+
+  useEffect(() => {
+    if (!settingsHydrated || autoConnectStarted.current) return;
+    autoConnectStarted.current = true;
+    let cancelled = false;
+
+    const shouldAutoConnect = connectionConfig.type === 'WEBSOCKET'
+      ? connectionConfig.websocket.autoConnect
+      : connectionConfig.type === 'UDP'
+        ? connectionConfig.udp.autoConnect
+        : connectionConfig.type === 'TCP' && connectionConfig.tcp.autoConnect;
+    if (!shouldAutoConnect) return;
+
+    dispatch(setActiveConnectionInfo({
+      type: connectionConfig.type,
+      portInfo: connectionConfig.type === 'WEBSOCKET'
+        ? connectionConfig.websocket.url
+        : connectionConfig.type === 'TCP'
+          ? `TCP: ${connectionConfig.tcp.host}:${connectionConfig.tcp.port}`
+          : `UDP: ${connectionConfig.udp.localPort}`,
+    }));
+    void universalConnectionService.configureMavlinkSigning(
+      mavlinkSettings.signingPolicy,
+      mavlinkSettings.signingLinkId,
+    ).then(() => {
+      if (!cancelled) return universalConnectionService.connect(connectionConfig);
+      return undefined;
+    }).catch(error => {
+      if (!cancelled) console.warn('[MAVLink auto-connect]', error instanceof Error ? error.message : 'Unable to connect');
+    });
+    return () => { cancelled = true; };
+  }, [connectionConfig, dispatch, mavlinkSettings, settingsHydrated]);
 
   return null;
 }

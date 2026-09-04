@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppSelector } from '../../store/hooks';
 import { selectConnectionStatus, selectMavlinkState, selectVehicleState } from '../../store/connection/connectionSlice';
-import { selectBattery, selectGps } from '../../store/telemetry/telemetrySlice';
+import { selectBattery, selectGps, selectTelemetryStale } from '../../store/telemetry/telemetrySlice';
 import { glassShadow, layers } from '../../theme/gcsTheme';
 import { useGcsLayout } from '../../hooks/useGcsLayout';
 import { GlassSurface } from '../gcs/GlassSurface';
@@ -11,6 +11,10 @@ import { FlyViewModeSwitcher } from '../flight/FlyViewModeSwitcher';
 
 import { selectHomePosition, selectHomeStatus } from '../../store/home/homeSlice';
 import { calculateBearingDegrees, calculateDistanceMeters, formatDistance, isValidCoordinate } from '../../utils/geographic';
+import { useFreshnessClock } from '../../hooks/useFreshnessClock';
+
+const GPS_FRESH_MS = 5_000;
+const BATTERY_FRESH_MS = 30_000;
 
 type Tone = 'neutral' | 'success' | 'primary' | 'danger' | 'warning';
 
@@ -52,20 +56,26 @@ export const TopTelemetryHUD = React.memo(function TopTelemetryHUD({
   onOpenAi?: () => void;
 }) {
   const layout = useGcsLayout();
+  const now = useFreshnessClock();
   const compact = showFlightViewSwitcher || layout.isCompactLandscape || layout.contentWidth < 900;
 
   const connection = useAppSelector(selectConnectionStatus);
   const vehicle = useAppSelector(selectVehicleState);
   const mavlink = useAppSelector(selectMavlinkState);
   const connected = connection === 'CONNECTED' && vehicle === 'CONNECTED';
+  const telemetryStale = useAppSelector(selectTelemetryStale);
+  const telemetryLive = connected && !telemetryStale;
   const waiting = connection === 'CONNECTING' || mavlink === 'WAITING_HEARTBEAT';
   const lost = vehicle === 'STALE' || mavlink === 'HEARTBEAT_LOST';
 
   const gps = useAppSelector(selectGps);
-  const fixed = !!gps && (gps.value.gpsFix ?? 0) >= 3;
+  const gpsFresh = telemetryLive && !!gps && now - gps.timestamp <= GPS_FRESH_MS;
+  const fixed = gpsFresh && (gps.value.gpsFix ?? 0) >= 3;
 
   const battery = useAppSelector(selectBattery);
-  const batteryPct = battery ? Math.round(battery.value.percentage) : null;
+  const batteryPct = telemetryLive && battery && now - battery.timestamp <= BATTERY_FRESH_MS
+    ? Math.round(battery.value.percentage)
+    : null;
 
   const home = useAppSelector(selectHomePosition);
   const homeStatus = useAppSelector(selectHomeStatus);
@@ -112,7 +122,7 @@ export const TopTelemetryHUD = React.memo(function TopTelemetryHUD({
           icon="crosshairs-gps"
           compact={compact}
           tone={fixed ? 'primary' : 'neutral'}
-          value={fixed ? `${gps?.value.satellites ?? '--'} SAT` : 'GPS No fix'}
+          value={!gpsFresh ? 'GPS --' : fixed ? `${gps?.value.satellites ?? '--'} SAT` : 'GPS No fix'}
         />
 
         {/* Home Pill */}
@@ -137,7 +147,7 @@ export const TopTelemetryHUD = React.memo(function TopTelemetryHUD({
 
 const styles = StyleSheet.create({
   topHudWrapper: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     zIndex: layers.hud,
   },
   pillsRow: {

@@ -16,10 +16,12 @@ import { DEFAULT_JOYSTICK_CONFIG } from '../src/settings/defaults/joystick';
 import {
   canShowVideo,
   getVideoAvailability,
+  resolveFlightLayerVisibility,
   resolveInitialFlightDisplay,
 } from '../src/video/FlightDisplayState';
 
 const createBaseState = (): SettingsState => ({
+  hydrated: true,
   showJoysticks: true,
   showTelemetry: true,
   mainViewMode: 'HUD',
@@ -34,6 +36,29 @@ const createBaseState = (): SettingsState => ({
   joystick: DEFAULT_JOYSTICK_CONFIG,
 });
 
+test('manual HUD and Video choices drive the rendered flight layer truthfully', () => {
+  assert.deepEqual(resolveFlightLayerVisibility('FLIGHT', 'HUD', true), {
+    map: false,
+    video: false,
+    hud: true,
+  });
+  assert.deepEqual(resolveFlightLayerVisibility('FLIGHT', 'VIDEO', true), {
+    map: false,
+    video: true,
+    hud: false,
+  });
+  assert.deepEqual(resolveFlightLayerVisibility('FLIGHT', 'VIDEO', false), {
+    map: false,
+    video: false,
+    hud: true,
+  });
+  assert.deepEqual(resolveFlightLayerVisibility('MAP', 'VIDEO', true), {
+    map: true,
+    video: false,
+    hud: false,
+  });
+});
+
 test('Flight and Map are primary views while HUD/Video preference is preserved', () => {
   let state = createBaseState();
   state = settingsReducer(state, setFlightDisplayMode('VIDEO'));
@@ -46,6 +71,24 @@ test('Flight and Map are primary views while HUD/Video preference is preserved',
 
   state = settingsReducer(state, setPrimaryFlyView('FLIGHT'));
   assert.equal(state.mainViewMode, 'VIDEO');
+});
+
+test('manual HUD and Video taps leave Map and open the requested flight view', () => {
+  let state = settingsReducer(createBaseState(), setPrimaryFlyView('MAP'));
+  state = settingsReducer(state, setFlightDisplayMode('HUD'));
+  assert.equal(state.mainViewMode, 'HUD');
+  assert.equal(state.flightDisplayMode, 'HUD');
+
+  state = settingsReducer(state, setPrimaryFlyView('MAP'));
+  state = settingsReducer(state, setFlightDisplayMode('VIDEO'));
+  assert.equal(state.mainViewMode, 'VIDEO');
+  assert.equal(state.flightDisplayMode, 'VIDEO');
+});
+
+test('automatic display changes do not pull the pilot away from Map', () => {
+  let state = settingsReducer(createBaseState(), setPrimaryFlyView('MAP'));
+  state = settingsReducer(state, setAutomaticFlightDisplay('VIDEO'));
+  assert.equal(state.mainViewMode, 'MAP');
 });
 
 test('automatic video selection never overrides a manual HUD choice', () => {

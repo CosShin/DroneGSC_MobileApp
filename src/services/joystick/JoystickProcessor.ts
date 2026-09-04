@@ -9,7 +9,14 @@ export type FlightControlListener = (input: FlightControlInput) => void;
 class JoystickProcessor {
   private leftStick: JoystickInput = { x: 0, y: 0, active: false, timestamp: 0 };
   private rightStick: JoystickInput = { x: 0, y: 0, active: false, timestamp: 0 };
-  private output: FlightControlInput = { roll: 0, pitch: 0, yaw: 0, throttle: 0.5, timestamp: 0 };
+  private output: FlightControlInput = {
+    roll: 0,
+    pitch: 0,
+    yaw: 0,
+    throttle: 0.5,
+    validAxes: { roll: false, pitch: false, yaw: false, throttle: false },
+    timestamp: 0,
+  };
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private appStateSubscription: NativeEventSubscription | null = null;
   private appState: AppStateStatus = AppState.currentState;
@@ -72,6 +79,7 @@ class JoystickProcessor {
       pitch: this.output.pitch + (target.pitch - this.output.pitch) * alpha,
       yaw: this.output.yaw + (target.yaw - this.output.yaw) * alpha,
       throttle: this.output.throttle + (target.throttle - this.output.throttle) * alpha,
+      validAxes: target.validAxes,
       timestamp: now,
     };
     this.listeners.forEach(listener => listener(this.output));
@@ -86,7 +94,14 @@ class JoystickProcessor {
       this.sendNeutralFrame(now);
       return;
     }
-    this.output = { roll: 0, pitch: 0, yaw: 0, throttle: 0.5, timestamp: now };
+    this.output = {
+      roll: 0,
+      pitch: 0,
+      yaw: 0,
+      throttle: 0.5,
+      validAxes: { roll: false, pitch: false, yaw: false, throttle: false },
+      timestamp: now,
+    };
     this.listeners.forEach(listener => listener(this.output));
   }
 
@@ -113,7 +128,18 @@ class JoystickProcessor {
 
   private sendNeutralFrame(timestamp = Date.now()) {
     this.hadActiveInput = false;
-    this.output = { roll: 0, pitch: 0, yaw: 0, throttle: 0.5, timestamp };
+    // Neutralise exactly the axes that were previously commanded. MAVLink's
+    // INT16_MAX means "ignore this axis"; using it for every release would not
+    // overwrite the aircraft's last accepted values.
+    const releasedAxes = { ...this.output.validAxes };
+    this.output = {
+      roll: 0,
+      pitch: 0,
+      yaw: 0,
+      throttle: 0.5,
+      validAxes: releasedAxes,
+      timestamp,
+    };
     this.listeners.forEach(listener => listener(this.output));
     safetyLayer.executeJoystickCommand(this.output, { finalNeutral: true });
   }

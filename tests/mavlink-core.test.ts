@@ -61,6 +61,16 @@ function homePosition(
   return encodeMavlinkV2(242, payload, sequence, 1, componentId);
 }
 
+function globalPositionInt(altitudeMsl: number, relativeAltitude: number, sequence = 13) {
+  const payload = new Uint8Array(28);
+  const view = new DataView(payload.buffer);
+  view.setInt32(4, Math.round(10.841883 * 1e7), true);
+  view.setInt32(8, Math.round(106.676717 * 1e7), true);
+  view.setInt32(12, Math.round(altitudeMsl * 1000), true);
+  view.setInt32(16, Math.round(relativeAltitude * 1000), true);
+  return encodeMavlinkV2(33, payload, sequence, 1, 1);
+}
+
 function signedHeartbeat() {
   const unsigned = heartbeat();
   const signed = new Uint8Array(unsigned.length + 13);
@@ -124,6 +134,50 @@ test('streaming parser handles multiple frames and reports bad CRC without emitt
   assert.deepEqual(decoded.map(frame => frame.systemId), [1, 3]);
   assert.equal(parser.getDiagnostics().crcErrors, 1);
   assert.equal(parser.getDiagnostics().discardedBytes, 2);
+});
+
+test('GLOBAL_POSITION_INT keeps MSL and Home-relative altitude as separate semantics', async () => {
+  const transport = new FakeTransport();
+  const manager = new MavlinkManager();
+  await manager.connect(transport, {});
+  try {
+    transport.inject(heartbeat());
+    transport.inject(globalPositionInt(123.456, 8.75));
+    const state = manager.getState();
+    assert.equal(state.altitudeMsl, 123.456);
+    assert.equal(state.relativeAltitude, 8.75);
+    assert.equal(state.altitude, 8.75, 'flight altitude remains relative to Home');
+  } finally {
+    manager.disconnect();
+  }
+});
+
+test('MANUAL_CONTROL marks inactive joystick axes unavailable on the MAVLink wire', async () => {
+  const transport = new FakeTransport();
+  const manager = new MavlinkManager();
+  await manager.connect(transport, {});
+  try {
+    transport.inject(heartbeat());
+    transport.sent.length = 0;
+    await manager.sendManualControl({
+      roll: 0.4,
+      pitch: -0.2,
+      yaw: 0,
+      throttle: 0.5,
+      validAxes: { roll: true, pitch: true, yaw: false, throttle: false },
+      timestamp: Date.now(),
+    });
+    const parser = new MavlinkParser();
+    const frame = parser.push(transport.sent[0])[0];
+    assert.equal(frame.messageId, 69);
+    const view = new DataView(frame.payload.buffer, frame.payload.byteOffset, frame.payload.byteLength);
+    assert.equal(view.getInt16(0, true), -200);
+    assert.equal(view.getInt16(2, true), 400);
+    assert.equal(view.getInt16(4, true), 32767);
+    assert.equal(view.getInt16(6, true), 32767);
+  } finally {
+    manager.disconnect();
+  }
 });
 
 test('MAVLink manager discovers multiple vehicles and keeps one explicit selection', async () => {

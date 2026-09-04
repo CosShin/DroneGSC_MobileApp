@@ -1,5 +1,6 @@
 import { getCommandDefinition } from './MissionCommandRegistry';
 import { MissionEditorItem, MissionItemInt, MissionValidationResult, MissionVerificationResult } from './MissionTypes';
+import { isValidCoordinate } from '../../utils/geographic';
 
 /**
  * Validates high-level mission editor items before compiling and uploading.
@@ -37,6 +38,14 @@ export function validateMission(items: MissionEditorItem[]): MissionValidationRe
           itemId: item.id,
           field: 'lng',
           message: `Item #${index + 1} (${def.label}) has invalid longitude: ${item.lng}`,
+        });
+      }
+      if (item.lat === 0 && item.lng === 0 && !isValidCoordinate(item.lat, item.lng)) {
+        errors.push({
+          itemIndex: index,
+          itemId: item.id,
+          field: 'position',
+          message: `Item #${index + 1} (${def.label}) has an unavailable 0,0 position.`,
         });
       }
     }
@@ -164,6 +173,34 @@ export function verifyRoundTrip(
         uploadedValue: up.param2,
         downloadedValue: dn.param2,
       });
+    }
+
+    const numericFields: Array<keyof Pick<MissionItemInt, 'param3' | 'param4'>> = ['param3', 'param4'];
+    for (const field of numericFields) {
+      if (Math.abs(up[field] - dn[field]) > 0.01) {
+        diffs.push({
+          seq: i,
+          field,
+          uploadedValue: up[field],
+          downloadedValue: dn[field],
+        });
+      }
+    }
+
+    const exactFields: Array<keyof Pick<MissionItemInt, 'current' | 'autocontinue' | 'missionType'>> = [
+      'current',
+      'autocontinue',
+      'missionType',
+    ];
+    for (const field of exactFields) {
+      if (up[field] !== dn[field]) {
+        diffs.push({
+          seq: i,
+          field,
+          uploadedValue: up[field],
+          downloadedValue: dn[field],
+        });
+      }
     }
   }
 

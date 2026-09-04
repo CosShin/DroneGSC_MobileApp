@@ -39,6 +39,10 @@ import { compileMission } from '../../services/mission/MissionCompiler';
 import { decompileMission } from '../../services/mission/MissionDecompiler';
 import { validateMission, verifyRoundTrip } from '../../services/mission/MissionValidator';
 import { MissionItemInt } from '../../services/mission/MissionTypes';
+import { useIsFocused } from '@react-navigation/native';
+import { useFreshnessClock } from '../../hooks/useFreshnessClock';
+
+const VEHICLE_GPS_FRESH_MS = 5_000;
 
 export function PlanScreen() {
   useScreenOrientation();
@@ -46,6 +50,8 @@ export function PlanScreen() {
   const truth = useTruthfulTelemetry();
   const device = useDeviceLocation();
   const layout = useGcsLayout();
+  const isFocused = useIsFocused();
+  const now = useFreshnessClock();
 
   const items = useAppSelector(selectMissionItems);
   const waypoints = useAppSelector(selectWaypoints);
@@ -61,7 +67,10 @@ export function PlanScreen() {
   const [isVerifying, setIsVerifying] = useState(false);
 
   const transferActiveRef = React.useRef(false);
-  const vehiclePosition = gps && (gps.value.gpsFix ?? 0) >= 3 
+  const vehiclePosition = truth.connected
+    && gps
+    && now - gps.timestamp <= VEHICLE_GPS_FRESH_MS
+    && (gps.value.gpsFix ?? 0) >= 3
     ? { latitude: gps.value.latitude, longitude: gps.value.longitude } 
     : null;
   const position = vehiclePosition ?? device.position;
@@ -143,14 +152,24 @@ export function PlanScreen() {
     }
   };
 
-  // Round-trip verification
+  // Read-only verification: compare the local mission with the mission that is
+  // already stored on the autopilot. Upload remains an explicit user action.
   const handleVerify = async () => {
-    if (!truth.connected || isVerifying) return;
+    if (!truth.connected || syncing || transferActiveRef.current || isVerifying) return;
+
+    const validation = validateMission(items);
+    if (!validation.valid) {
+      const firstErr = validation.errors[0];
+      Alert.alert('Mission Validation Error', firstErr.message);
+      if (firstErr.itemId) dispatch(selectItem(firstErr.itemId));
+      return;
+    }
+
+    transferActiveRef.current = true;
     setIsVerifying(true);
 
     try {
       const wireItems = compileMission(items);
-      await universalConnectionService.uploadMission(wireItems);
       const downloadedWireItems = await universalConnectionService.downloadMission();
       const verification = verifyRoundTrip(wireItems, downloadedWireItems);
       
@@ -160,7 +179,22 @@ export function PlanScreen() {
     } catch (error) {
       Alert.alert('Verification Failed', error instanceof Error ? error.message : 'Unknown error');
     } finally {
+      transferActiveRef.current = false;
       setIsVerifying(false);
+    }
+  };
+
+  const handleOpenRawMission = () => {
+    try {
+      if (!rawWireItems.length) {
+        dispatch(setRawWireItems(compileMission(items)));
+      }
+      setRawModalVisible(true);
+    } catch (error) {
+      Alert.alert(
+        'Cannot Open Raw Mission',
+        error instanceof Error ? error.message : 'Mission data is invalid.',
+      );
     }
   };
 
@@ -191,6 +225,7 @@ export function PlanScreen() {
       {/* 1. Interactive Map Layer */}
       <View style={styles.mapLayer}>
         <OpenStreetMap
+          active={isFocused}
           vehiclePosition={vehiclePosition}
           phonePosition={device.position ? { latitude: device.position.latitude, longitude: device.position.longitude, accuracy: device.position.accuracy } : null}
           waypoints={waypoints}
@@ -243,12 +278,7 @@ export function PlanScreen() {
               <TouchableOpacity
                 accessibilityLabel="Open raw MAVLink debug"
                 style={styles.rawBtn}
-                onPress={() => {
-                  if (!rawWireItems.length) {
-                    dispatch(setRawWireItems(compileMission(items)));
-                  }
-                  setRawModalVisible(true);
-                }}
+                onPress={handleOpenRawMission}
               >
                 <MaterialCommunityIcons name="code-json" size={15} color="#2586EA" />
               </TouchableOpacity>
@@ -399,7 +429,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   mapLayer: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     zIndex: layers.background,
   },
   mapHintWrap: {

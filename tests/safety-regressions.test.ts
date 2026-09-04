@@ -33,3 +33,24 @@ test('stationary GPS refreshes its source timestamp without changing coordinates
   }));
   assert.equal(state.gps?.timestamp, 190);
 });
+
+test('GPS snapshot does not discard a changed MSL altitude', () => {
+  const base = { latitude: 10.8, longitude: 106.6, altitude: 5, relativeAltitude: 5, altitudeMsl: 100, satellites: 12, hdop: 0.8, gpsFix: 3 };
+  let state = telemetryReducer(undefined, updateTelemetrySnapshot({
+    timestamp: 100,
+    gpsTimestamp: 100,
+    stale: false,
+    gps: base,
+    attitude: null,
+    velocity: null,
+  }));
+  state = telemetryReducer(state, updateTelemetrySnapshot({
+    timestamp: 200,
+    gpsTimestamp: 200,
+    stale: false,
+    gps: { ...base, altitudeMsl: 101.25 },
+    attitude: null,
+    velocity: null,
+  }));
+  assert.equal(state.gps?.value.altitudeMsl, 101.25);
+});

@@ -4,7 +4,10 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { GlassSurface } from '../gcs/GlassSurface';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
+  selectFlightDisplayMode,
   selectPrimaryFlyView,
+  selectVideoSettings,
+  setFlightDisplayMode,
   setPrimaryFlyView,
 } from '../../store/settings/settingsSlice';
 import { glass, glassShadow, radius } from '../../theme/gcsTheme';
@@ -21,38 +24,75 @@ export const FlyViewModeSwitcher = React.memo(function FlyViewModeSwitcher({
 }: Props) {
   const dispatch = useAppDispatch();
   const primaryView = useAppSelector(selectPrimaryFlyView);
+  const displayMode = useAppSelector(selectFlightDisplayMode);
+  const video = useAppSelector(selectVideoSettings);
   const layout = useGcsLayout();
   const isCompact = compact ?? layout.isCompactLandscape;
+  const videoConfigured = video.transport === 'WEBRTC' && video.host.trim().length > 0;
+  const flightMode = primaryView === 'FLIGHT' ? displayMode : null;
 
   return (
     <View style={[styles.wrapper, style]} pointerEvents="box-none">
       <GlassSurface variant="strong" intensity={68} style={styles.surface} contentStyle={styles.content}>
-        {/* FLIGHT TAB */}
+        {/* HUD TAB */}
         <TouchableOpacity
           accessibilityRole="tab"
-          accessibilityState={{ selected: primaryView === 'FLIGHT' }}
-          accessibilityLabel="Switch to Flight view"
+          accessibilityState={{ selected: flightMode === 'HUD' }}
+          accessibilityLabel="Switch to flight HUD"
           activeOpacity={0.8}
           style={[
             styles.tab,
             isCompact && styles.tabCompact,
-            primaryView === 'FLIGHT' && styles.tabActive,
+            flightMode === 'HUD' && styles.tabActive,
           ]}
-          onPress={() => dispatch(setPrimaryFlyView('FLIGHT'))}
+          onPress={() => dispatch(setFlightDisplayMode('HUD'))}
         >
           <MaterialCommunityIcons
             name="airplane"
             size={isCompact ? 13 : 15}
-            color={primaryView === 'FLIGHT' ? '#2586EA' : glass.textMuted}
+            color={flightMode === 'HUD' ? '#2586EA' : glass.textMuted}
           />
           <Text
             style={[
               styles.tabLabel,
               isCompact && styles.tabLabelCompact,
-              primaryView === 'FLIGHT' && styles.tabLabelActive,
+              flightMode === 'HUD' && styles.tabLabelActive,
             ]}
           >
-            FLIGHT
+            HUD
+          </Text>
+        </TouchableOpacity>
+
+        <View style={styles.divider} />
+
+        {/* VIDEO TAB */}
+        <TouchableOpacity
+          accessibilityRole="tab"
+          accessibilityState={{ selected: flightMode === 'VIDEO', disabled: !videoConfigured }}
+          accessibilityLabel={videoConfigured ? 'Switch to live video' : 'Video is not configured'}
+          activeOpacity={0.8}
+          disabled={!videoConfigured}
+          style={[
+            styles.tab,
+            isCompact && styles.tabCompact,
+            flightMode === 'VIDEO' && styles.tabActive,
+            !videoConfigured && styles.tabDisabled,
+          ]}
+          onPress={() => dispatch(setFlightDisplayMode('VIDEO'))}
+        >
+          <MaterialCommunityIcons
+            name="video-outline"
+            size={isCompact ? 13 : 15}
+            color={flightMode === 'VIDEO' ? '#2586EA' : glass.textMuted}
+          />
+          <Text
+            style={[
+              styles.tabLabel,
+              isCompact && styles.tabLabelCompact,
+              flightMode === 'VIDEO' && styles.tabLabelActive,
+            ]}
+          >
+            VIDEO
           </Text>
         </TouchableOpacity>
 
@@ -129,6 +169,9 @@ const styles = StyleSheet.create({
   tabActive: {
     backgroundColor: 'rgba(255, 255, 255, 0.78)',
     borderColor: 'rgba(37, 134, 234, 0.35)',
+  },
+  tabDisabled: {
+    opacity: 0.45,
   },
   divider: {
     width: 1,

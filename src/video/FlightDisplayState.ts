@@ -24,6 +24,20 @@ export function canShowVideo(configured: boolean, status: VideoStatus): boolean 
   return configured;
 }
 
+export function resolveFlightLayerVisibility(
+  primaryView: 'FLIGHT' | 'MAP',
+  displayMode: FlightDisplayMode,
+  videoConfigured: boolean,
+) {
+  const map = primaryView === 'MAP';
+  const video = primaryView === 'FLIGHT' && displayMode === 'VIDEO' && videoConfigured;
+  return {
+    map,
+    video,
+    hud: primaryView === 'FLIGHT' && !video,
+  };
+}
+
 export function videoStatusLabel(configured: boolean, status: VideoStatus): string {
   const availability = getVideoAvailability(configured, status);
   if (availability === 'LIVE') return 'VIDEO LIVE';

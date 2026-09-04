@@ -39,7 +39,7 @@ export function BrandLogoButton({ open, onPress }: { open: boolean; onPress: () 
         tint="extraLight"
         intensity={68}
         experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       />
       {!imgError ? (
         <Image 
@@ -169,12 +169,12 @@ export function BrandMenu({ currentRoute, onNavigate }: Props) {
 
 const styles = StyleSheet.create({
   root: { 
-    ...StyleSheet.absoluteFillObject, 
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     zIndex: layers.brand + 10, 
     elevation: layers.brand + 10,
   },
   backdrop: { 
-    ...StyleSheet.absoluteFillObject, 
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     backgroundColor: 'rgba(15, 25, 40, 0.20)' 
   },
   logoButton: {

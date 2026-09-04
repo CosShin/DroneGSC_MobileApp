@@ -19,9 +19,9 @@ export function DiagnosticsOverlay() {
 
   useEffect(() => {
     if (!visible) return;
-    let last = typeof global.performance?.now === 'function' ? global.performance.now() : Date.now();
+    let last = typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : Date.now();
     const interval = setInterval(() => {
-      const now = typeof global.performance?.now === 'function' ? global.performance.now() : Date.now();
+      const now = typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : Date.now();
       setLagMs(Math.max(0, Math.round(now - last - 500)));
       last = now;
       setRenderCount(c => c + 1);
@@ -36,7 +36,7 @@ export function DiagnosticsOverlay() {
         style={styles.miniBtn} 
         onPress={() => setVisible(true)}
       >
-        <BlurView pointerEvents="none" tint="extraLight" intensity={64} experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined} style={StyleSheet.absoluteFillObject} />
+        <BlurView pointerEvents="none" tint="extraLight" intensity={64} experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined} style={StyleSheet.absoluteFill} />
         <MaterialCommunityIcons name="bug-outline" size={15} color="#475569" />
       </TouchableOpacity>
     );
@@ -46,7 +46,7 @@ export function DiagnosticsOverlay() {
 
   return (
     <View style={styles.container}>
-      <BlurView pointerEvents="none" tint="extraLight" intensity={72} experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined} style={StyleSheet.absoluteFillObject} />
+      <BlurView pointerEvents="none" tint="extraLight" intensity={72} experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined} style={StyleSheet.absoluteFill} />
       <View style={styles.headerRow}>
         <Text style={styles.title}>MAVLink Diagnostics</Text>
         <TouchableOpacity 

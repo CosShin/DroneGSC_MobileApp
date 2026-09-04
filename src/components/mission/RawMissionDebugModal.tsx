@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { MissionItemInt, MissionVerificationResult } from '../../services/mission/MissionTypes';
 import { getCommandDefinition, getFrameLabel } from '../../services/mission/MissionCommandRegistry';
@@ -24,9 +24,36 @@ export function RawMissionDebugModal({
 }: Props) {
   if (!visible) return null;
 
+  const safeWireItems = Array.isArray(wireItems) ? wireItems : [];
+
+  const renderWireItem = ({ item, index }: { item: MissionItemInt; index: number }) => {
+    const command = finiteInteger(item.command);
+    const def = getCommandDefinition(command ?? -1);
+    const isEven = index % 2 === 0;
+    return (
+      <View style={[styles.tableRow, isEven && styles.rowEven]}>
+        <Text style={[styles.td, styles.colSeq, styles.seqText]}>{finiteInteger(item.seq) ?? '--'}</Text>
+        <View style={styles.colCmd}>
+          <Text numberOfLines={1} style={styles.cmdText}>{def.name}</Text>
+          <Text numberOfLines={1} style={styles.cmdSub}>{def.label}</Text>
+        </View>
+        <Text numberOfLines={1} style={[styles.td, styles.colFrame]}>
+          {finiteInteger(item.frame) == null ? '--' : getFrameLabel(item.frame)}
+        </Text>
+        <Text style={[styles.td, styles.colP]}>{formatFinite(item.param1, 1)}</Text>
+        <Text style={[styles.td, styles.colP]}>{formatFinite(item.param2, 1)}</Text>
+        <Text style={[styles.td, styles.colP]}>{formatFinite(item.param3, 1)}</Text>
+        <Text style={[styles.td, styles.colP]}>{formatFinite(item.param4, 1)}</Text>
+        <Text numberOfLines={1} style={[styles.td, styles.colCoord]}>{formatCoordinate(item.x)}</Text>
+        <Text numberOfLines={1} style={[styles.td, styles.colCoord]}>{formatCoordinate(item.y)}</Text>
+        <Text style={[styles.td, styles.colAlt]}>{formatFinite(item.z, 1, 'm')}</Text>
+        <Text style={[styles.td, styles.colAuto]}>{item.autocontinue === 1 ? 'YES' : item.autocontinue === 0 ? 'NO' : '--'}</Text>
+      </View>
+    );
+  };
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
+      <View style={styles.backdrop} accessibilityViewIsModal>
         <View style={styles.modalCard}>
           {/* Modal Header */}
           <View style={styles.header}>
@@ -76,36 +103,21 @@ export function RawMissionDebugModal({
           </View>
 
           {/* Table Rows */}
-          <ScrollView style={styles.tableScroll} contentContainerStyle={styles.tableScrollContent}>
-            {wireItems.length ? (
-              wireItems.map((item, idx) => {
-                const def = getCommandDefinition(item.command);
-                const isEven = idx % 2 === 0;
-                return (
-                  <View key={item.seq} style={[styles.tableRow, isEven && styles.rowEven]}>
-                    <Text style={[styles.td, styles.colSeq, styles.seqText]}>{item.seq}</Text>
-                    <View style={styles.colCmd}>
-                      <Text numberOfLines={1} style={styles.cmdText}>{def.name}</Text>
-                      <Text numberOfLines={1} style={styles.cmdSub}>{def.label}</Text>
-                    </View>
-                    <Text numberOfLines={1} style={[styles.td, styles.colFrame]}>{getFrameLabel(item.frame)}</Text>
-                    <Text style={[styles.td, styles.colP]}>{item.param1.toFixed(1)}</Text>
-                    <Text style={[styles.td, styles.colP]}>{item.param2.toFixed(1)}</Text>
-                    <Text style={[styles.td, styles.colP]}>{item.param3.toFixed(1)}</Text>
-                    <Text style={[styles.td, styles.colP]}>{item.param4.toFixed(1)}</Text>
-                    <Text numberOfLines={1} style={[styles.td, styles.colCoord]}>{item.x !== 0 ? (item.x / 1e7).toFixed(6) : '0'}</Text>
-                    <Text numberOfLines={1} style={[styles.td, styles.colCoord]}>{item.y !== 0 ? (item.y / 1e7).toFixed(6) : '0'}</Text>
-                    <Text style={[styles.td, styles.colAlt]}>{item.z.toFixed(1)}m</Text>
-                    <Text style={[styles.td, styles.colAuto]}>{item.autocontinue ? 'YES' : 'NO'}</Text>
-                  </View>
-                );
-              })
-            ) : (
+          <FlatList
+            style={styles.tableScroll}
+            contentContainerStyle={styles.tableScrollContent}
+            data={safeWireItems}
+            renderItem={renderWireItem}
+            keyExtractor={(item, index) => `${finiteInteger(item.seq) ?? 'unknown'}-${index}`}
+            initialNumToRender={18}
+            maxToRenderPerBatch={18}
+            windowSize={7}
+            ListEmptyComponent={(
               <View style={styles.emptyWrap}>
                 <Text style={styles.emptyText}>No compiled wire items available. Upload or compile mission first.</Text>
               </View>
             )}
-          </ScrollView>
+          />
 
           {/* Footer Actions */}
           <View style={styles.footer}>
@@ -125,13 +137,31 @@ export function RawMissionDebugModal({
           </View>
         </View>
       </View>
-    </Modal>
   );
+}
+
+function finiteInteger(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) ? value : null;
+}
+
+function formatFinite(value: unknown, digits: number, suffix = '') {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(digits)}${suffix}` : '--';
+}
+
+function formatCoordinate(value: unknown) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '--';
+  return value === 0 ? '0' : (value / 1e7).toFixed(6);
 }
 
 const styles = StyleSheet.create({
   backdrop: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: layers.modal,
+    elevation: layers.modal,
     backgroundColor: 'rgba(10, 20, 35, 0.75)',
     justifyContent: 'center',
     alignItems: 'center',

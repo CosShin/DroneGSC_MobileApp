@@ -11,8 +11,14 @@ export interface MissionTransferOptions {
 const MISSION_TYPE_MISSION = 0;
 const DEFAULT_RESPONSE_TIMEOUT_MS = 1_500;
 const DEFAULT_MAX_RETRIES = 5;
+const MAX_MISSION_ITEMS = 1_000;
+const MAX_BUFFERED_MISSION_FRAMES = 256;
+const MAV_MISSION_OPERATION_CANCELLED = 15;
+const GCS_SYSTEM_ID = 255;
+const GCS_COMPONENT_ID = 190;
 
 interface MissionFrameQueue {
+  sessionId: number;
   next(timeoutMs: number): Promise<MavlinkFrame>;
   close(): void;
 }
@@ -33,12 +39,16 @@ export class MavlinkMissionService {
   async upload(items: MissionItemInt[], progress?: (value: number) => void): Promise<void> {
     if (this.active) throw new Error('MISSION_TRANSFER_BUSY');
     if (!items.length) throw new Error('MISSION_EMPTY');
+    if (items.length > MAX_MISSION_ITEMS) throw new Error('MISSION_TOO_LARGE');
     this.active = true;
-    const frames = this.queue();
+    const sessionId = this.manager.getSessionId();
+    const frames = this.queue(sessionId);
+    let target: { systemId: number; componentId: number } | null = null;
 
     try {
-      const target = this.manager.getVehicleTarget();
-      const sendCount = () => this.manager.sendMissionFrame(44, this.countPayload(items.length, target));
+      const vehicleTarget = this.manager.getVehicleTarget();
+      target = vehicleTarget;
+      const sendCount = () => this.manager.sendMissionFrame(44, this.countPayload(items.length, vehicleTarget));
       let resend = sendCount;
       await sendCount();
 
@@ -46,7 +56,8 @@ export class MavlinkMissionService {
       while (true) {
         const frame = await this.waitFor(
           frames,
-          candidate => candidate.messageId === 47 || candidate.messageId === 40 || candidate.messageId === 51,
+          candidate => this.isForThisGcs(candidate)
+            && (candidate.messageId === 47 || candidate.messageId === 40 || candidate.messageId === 51),
           resend,
         );
 
@@ -68,12 +79,15 @@ export class MavlinkMissionService {
           throw new Error('MISSION_REQUEST_OUT_OF_RANGE');
         }
 
-        const sendItem = () => this.manager.sendMissionFrame(73, this.encodeItemIntPayload(items[seq], seq, target));
+        const sendItem = () => this.manager.sendMissionFrame(73, this.encodeItemIntPayload(items[seq], seq, vehicleTarget));
         resend = sendItem;
         await sendItem();
         sent.add(seq);
         progress?.(sent.size / items.length);
       }
+    } catch (error) {
+      await this.cancelTransferIfPossible(target, error);
+      throw error;
     } finally {
       frames.close();
       this.active = false;
@@ -86,28 +100,37 @@ export class MavlinkMissionService {
   async download(progress?: (value: number) => void): Promise<MissionItemInt[]> {
     if (this.active) throw new Error('MISSION_TRANSFER_BUSY');
     this.active = true;
-    const frames = this.queue();
+    const sessionId = this.manager.getSessionId();
+    const frames = this.queue(sessionId);
+    let target: { systemId: number; componentId: number } | null = null;
 
     try {
-      const target = this.manager.getVehicleTarget();
-      const sendListRequest = () => this.manager.sendMissionFrame(43, this.targetPayload(target));
+      const vehicleTarget = this.manager.getVehicleTarget();
+      target = vehicleTarget;
+      const sendListRequest = () => this.manager.sendMissionFrame(43, this.targetPayload(vehicleTarget));
       await sendListRequest();
 
-      const countFrame = await this.waitFor(frames, frame => frame.messageId === 44, sendListRequest);
+      const countFrame = await this.waitFor(
+        frames,
+        frame => frame.messageId === 44 && this.isForThisGcs(frame),
+        sendListRequest,
+      );
       if (countFrame.payload.byteLength < 2) {
         throw new Error('MISSION_COUNT_MALFORMED');
       }
 
       const count = new DataView(countFrame.payload.buffer, countFrame.payload.byteOffset, countFrame.payload.byteLength).getUint16(0, true);
+      if (count > MAX_MISSION_ITEMS) throw new Error('MISSION_COUNT_TOO_LARGE');
       const result: MissionItemInt[] = [];
 
       for (let seq = 0; seq < count; seq++) {
-        const sendItemRequest = () => this.manager.sendMissionFrame(51, this.requestPayload(seq, target));
+        const sendItemRequest = () => this.manager.sendMissionFrame(51, this.requestPayload(seq, vehicleTarget));
         await sendItemRequest();
 
         const itemFrame = await this.waitFor(
           frames,
           frame => (frame.messageId === 73 || frame.messageId === 39)
+            && this.isForThisGcs(frame)
             && frame.payload.byteLength >= 30
             && this.sequence(frame) === seq,
           sendItemRequest,
@@ -118,8 +141,11 @@ export class MavlinkMissionService {
       }
 
       // Send MISSION_ACK to acknowledge successful download
-      await this.manager.sendMissionFrame(47, this.ackPayload(target, 0));
+      await this.manager.sendMissionFrame(47, this.ackPayload(vehicleTarget, 0));
       return result;
+    } catch (error) {
+      await this.cancelTransferIfPossible(target, error);
+      throw error;
     } finally {
       frames.close();
       this.active = false;
@@ -132,28 +158,49 @@ export class MavlinkMissionService {
   async clear(): Promise<void> {
     if (this.active) throw new Error('MISSION_TRANSFER_BUSY');
     this.active = true;
-    const frames = this.queue();
+    const sessionId = this.manager.getSessionId();
+    const frames = this.queue(sessionId);
+    let target: { systemId: number; componentId: number } | null = null;
 
     try {
-      const target = this.manager.getVehicleTarget();
-      const sendClear = () => this.manager.sendMissionFrame(45, this.targetPayload(target));
+      const vehicleTarget = this.manager.getVehicleTarget();
+      target = vehicleTarget;
+      const sendClear = () => this.manager.sendMissionFrame(45, this.targetPayload(vehicleTarget));
       await sendClear();
-      const ack = await this.waitFor(frames, frame => frame.messageId === 47, sendClear);
+      const ack = await this.waitFor(
+        frames,
+        frame => frame.messageId === 47 && this.isForThisGcs(frame),
+        sendClear,
+      );
       this.assertAcceptedAck(ack);
+    } catch (error) {
+      await this.cancelTransferIfPossible(target, error);
+      throw error;
     } finally {
       frames.close();
       this.active = false;
     }
   }
 
-  private queue(): MissionFrameQueue {
+  private queue(sessionId: number): MissionFrameQueue {
     const buffered: MavlinkFrame[] = [];
     let closed = false;
     let waiting: { resolve: (frame: MavlinkFrame) => void; reject: (error: Error) => void; timeout: ReturnType<typeof setTimeout> } | null = null;
 
     const remove = this.manager.onMissionFrame(frame => {
       if (closed) return;
+      if (this.manager.getSessionId() !== sessionId) {
+        if (waiting) {
+          const current = waiting;
+          waiting = null;
+          clearTimeout(current.timeout);
+          current.reject(new Error('MISSION_SESSION_CHANGED'));
+        }
+        return;
+      }
+      if (!this.isForThisGcs(frame)) return;
       if (!waiting) {
+        if (buffered.length >= MAX_BUFFERED_MISSION_FRAMES) buffered.shift();
         buffered.push(frame);
         return;
       }
@@ -164,6 +211,7 @@ export class MavlinkMissionService {
     });
 
     return {
+      sessionId,
       next: (timeoutMs: number) => new Promise<MavlinkFrame>((resolve, reject) => {
         if (closed) { reject(new Error('MISSION_TRANSFER_CLOSED')); return; }
         const ready = buffered.shift();
@@ -198,6 +246,7 @@ export class MavlinkMissionService {
     while (true) {
       let frame: MavlinkFrame;
       try {
+        if (this.manager.getSessionId() !== frames.sessionId) throw new Error('MISSION_SESSION_CHANGED');
         frame = await frames.next(this.responseTimeoutMs);
       } catch (error) {
         if (!(error instanceof Error) || error.message !== 'MISSION_TIMEOUT' || retries >= this.maxRetries) {
@@ -210,8 +259,10 @@ export class MavlinkMissionService {
         await resend();
         continue;
       }
-      if (frame.messageId === 47) this.assertAcceptedAck(frame);
-      if (matches(frame)) return frame;
+      if (matches(frame)) {
+        if (frame.messageId === 47) this.assertAcceptedAck(frame);
+        return frame;
+      }
     }
   }
 
@@ -251,6 +302,52 @@ export class MavlinkMissionService {
 
   private ackPayload(t: { systemId: number; componentId: number }, result: number) {
     return Uint8Array.of(t.systemId, t.componentId, result, MISSION_TYPE_MISSION);
+  }
+
+  private isForThisGcs(frame: MavlinkFrame) {
+    const payload = frame.payload;
+    let targetSystem: number | null = null;
+    let targetComponent: number | null = null;
+    let missionType = MISSION_TYPE_MISSION;
+
+    if (frame.messageId === 47) {
+      // MAVLink 2 may truncate the trailing accepted result (zero), leaving
+      // only target_system and target_component on the wire.
+      if (payload.byteLength < 2 || (frame.version === 1 && payload.byteLength < 3)) return false;
+      targetSystem = payload[0];
+      targetComponent = payload[1];
+      missionType = payload.byteLength >= 4 ? payload[3] : MISSION_TYPE_MISSION;
+    } else if (frame.messageId === 40 || frame.messageId === 44 || frame.messageId === 51) {
+      if (payload.byteLength < 4) return false;
+      targetSystem = payload[2];
+      targetComponent = payload[3];
+      missionType = payload.byteLength >= 5 ? payload[4] : MISSION_TYPE_MISSION;
+    } else if (frame.messageId === 39 || frame.messageId === 73) {
+      if (payload.byteLength < 34) return false;
+      targetSystem = payload[32];
+      targetComponent = payload[33];
+      missionType = payload.byteLength >= 38 ? payload[37] : MISSION_TYPE_MISSION;
+    } else {
+      return false;
+    }
+
+    return targetSystem === GCS_SYSTEM_ID
+      && (targetComponent === GCS_COMPONENT_ID || targetComponent === 0)
+      && missionType === MISSION_TYPE_MISSION;
+  }
+
+  private async cancelTransferIfPossible(
+    target: { systemId: number; componentId: number } | null,
+    error: unknown,
+  ) {
+    if (!target || this.manager.getState().systemId === null) return;
+    const reason = error instanceof Error ? error.message : '';
+    if (!reason.includes('TIMEOUT') && !reason.includes('SESSION') && !reason.includes('CLOSED')) return;
+    try {
+      await this.manager.sendMissionFrame(47, this.ackPayload(target, MAV_MISSION_OPERATION_CANCELLED));
+    } catch {
+      // The transport may already be gone; the original transfer error is authoritative.
+    }
   }
 
   /**

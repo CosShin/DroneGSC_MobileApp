@@ -21,22 +21,3 @@ export function buildSetHomeCommandParams(payload: SetHomePayload): number[] {
   // COMMAND_LONG location parameters are degrees/degrees/metres MSL.
   return [0, 0, 0, Number.NaN, payload.latitude!, payload.longitude!, payload.altitude];
 }
-
-/**
- * Returns an altitude that is known to use the MAVLink MSL datum. Phone GPS
- * altitude is deliberately excluded because Expo reports WGS-84 ellipsoid
- * altitude, not MSL altitude.
- */
-export function resolveSetHomeAltitudeMsl(
-  confirmedHomeAltitude: number | null | undefined,
-  vehicleAltitudeMsl: number | null | undefined,
-  vehicleArmed: boolean,
-): number | null {
-  if (confirmedHomeAltitude != null && Number.isFinite(confirmedHomeAltitude)) {
-    return confirmedHomeAltitude;
-  }
-  if (!vehicleArmed && vehicleAltitudeMsl != null && Number.isFinite(vehicleAltitudeMsl)) {
-    return vehicleAltitudeMsl;
-  }
-  return null;
-}

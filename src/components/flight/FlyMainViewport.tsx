@@ -6,8 +6,8 @@ import { FlyMapView } from './FlyMapView';
 import { layers } from '../../theme/gcsTheme';
 import { useAppSelector } from '../../store/hooks';
 import { selectVideoSettings } from '../../store/settings/settingsSlice';
-import { selectVideoRuntime } from '../../store/videoSlice';
-import type { FlightDisplayMode } from '../../video/FlightDisplayState';
+import { resolveFlightLayerVisibility, type FlightDisplayMode } from '../../video/FlightDisplayState';
+import { useIsFocused } from '@react-navigation/native';
 
 interface Props {
   primaryView: 'FLIGHT' | 'MAP';
@@ -23,41 +23,37 @@ interface Props {
  */
 export const FlyMainViewport = React.memo(function FlyMainViewport({
   primaryView,
-  displayMode,
+  displayMode = 'HUD',
 }: Props) {
   const video = useAppSelector(selectVideoSettings);
-  const runtime = useAppSelector(selectVideoRuntime);
+  const isFocused = useIsFocused();
   const videoConfigured = video.transport === 'WEBRTC' && video.host.trim().length > 0;
-
-  // Adaptive switching: video if available & live, otherwise HUD
-  const isVideoLive = videoConfigured && runtime.status === 'LIVE';
-  const showVideo = primaryView === 'FLIGHT' && isVideoLive;
-  const showHud = primaryView === 'FLIGHT' && !isVideoLive;
+  const visible = resolveFlightLayerVisibility(primaryView, displayMode, videoConfigured);
 
   return (
     <View style={styles.container}>
       {/* MAP LAYER */}
       <View
-        style={[styles.layer, styles.mapLayer, primaryView !== 'MAP' && styles.hiddenNativeLayer]}
-        pointerEvents={primaryView === 'MAP' ? 'auto' : 'none'}
+        style={[styles.layer, styles.mapLayer, !visible.map && styles.hiddenNativeLayer]}
+        pointerEvents={visible.map ? 'auto' : 'none'}
       >
-        <FlyMapView />
+        <FlyMapView active={isFocused && visible.map} />
       </View>
 
       {/* VIDEO LAYER */}
       {videoConfigured ? (
         <View
-          style={[styles.layer, styles.videoLayer, !showVideo && styles.hiddenVideoLayer]}
-          pointerEvents={showVideo ? 'auto' : 'none'}
+          style={[styles.layer, styles.videoLayer, !visible.video && styles.hiddenVideoLayer]}
+          pointerEvents={visible.video ? 'auto' : 'none'}
         >
-          <FlyVideoView />
+          <FlyVideoView enabled={isFocused} />
         </View>
       ) : null}
 
       {/* HUD / INSTRUMENT LAYER */}
       <View
-        style={[styles.layer, styles.instrumentLayer, !showHud && styles.hiddenNativeLayer]}
-        pointerEvents={showHud ? 'box-none' : 'none'}
+        style={[styles.layer, styles.instrumentLayer, !visible.hud && styles.hiddenNativeLayer]}
+        pointerEvents={visible.hud ? 'box-none' : 'none'}
       >
         <FlyInstrumentView />
       </View>
@@ -67,11 +63,11 @@ export const FlyMainViewport = React.memo(function FlyMainViewport({
 
 const styles = StyleSheet.create({
   container: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     backgroundColor: '#050A11',
   },
   layer: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
   },
   mapLayer: {
     zIndex: layers.background,

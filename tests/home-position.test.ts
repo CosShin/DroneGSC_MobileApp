@@ -16,10 +16,7 @@ import {
   setHomeTransaction,
   resetHomeTransaction,
 } from '../src/store/home/homeSlice';
-import {
-  buildSetHomeCommandParams,
-  resolveSetHomeAltitudeMsl,
-} from '../src/services/home/HomeProtocol';
+import { buildSetHomeCommandParams } from '../src/services/home/HomeProtocol';
 
 test('Geographic calculations: Haversine distance and bearing', () => {
   // Point A: Ho Chi Minh City (10.7769, 106.7009)
@@ -141,11 +138,4 @@ test('MAV_CMD_DO_SET_HOME params preserve coordinate units and require MSL altit
     () => buildSetHomeCommandParams({ useCurrent: false, latitude: 10, longitude: 106 }),
     /INVALID_SET_HOME_LOCATION/,
   );
-});
-
-test('explicit Home altitude uses confirmed MSL data and never phone ellipsoid altitude', () => {
-  assert.equal(resolveSetHomeAltitudeMsl(12.5, 99, true), 12.5);
-  assert.equal(resolveSetHomeAltitudeMsl(null, 8.25, false), 8.25);
-  assert.equal(resolveSetHomeAltitudeMsl(null, 8.25, true), null);
-  assert.equal(resolveSetHomeAltitudeMsl(null, null, false), null);
 });

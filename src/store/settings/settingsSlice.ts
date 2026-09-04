@@ -31,6 +31,7 @@ import { AiSettings } from '../../settings/types/ai';
 import { DEFAULT_AI_CONFIG } from '../../settings/defaults/ai';
 
 export interface SettingsState {
+  hydrated: boolean;
   showJoysticks: boolean;
   showTelemetry: boolean;
   mainViewMode: 'VIDEO' | 'MAP' | 'HUD';
@@ -49,6 +50,7 @@ export interface SettingsState {
 }
 
 const initialState: SettingsState = {
+  hydrated: false,
   showJoysticks: true,
   showTelemetry: true,
   mainViewMode: 'HUD',
@@ -92,7 +94,15 @@ export const settingsSlice = createSlice({
       state.connectionProfiles = Array.isArray(incoming.connectionProfiles) ? incoming.connectionProfiles : [];
       if (incoming.video) state.video = { ...DEFAULT_VIDEO_CONFIG, ...incoming.video };
       if (incoming.mavlink) state.mavlink = { ...DEFAULT_MAVLINK_CONFIG, ...incoming.mavlink };
+      if (incoming.piGateway) state.piGateway = { ...DEFAULT_PI_CONFIG, ...incoming.piGateway };
+      if (incoming.camera) state.camera = { ...DEFAULT_CAMERA_CONFIG, ...incoming.camera };
+      if (incoming.telemetry) state.telemetry = { ...DEFAULT_TELEMETRY_CONFIG, ...incoming.telemetry };
+      if (incoming.joystick) state.joystick = { ...DEFAULT_JOYSTICK_CONFIG, ...incoming.joystick };
       if (incoming.ai) state.ai = { ...DEFAULT_AI_CONFIG, ...incoming.ai };
+      state.hydrated = true;
+    },
+    markSettingsHydrated: (state) => {
+      state.hydrated = true;
     },
     setShowJoysticks: (state, action: PayloadAction<boolean>) => {
       state.showJoysticks = action.payload;
@@ -116,7 +126,10 @@ export const settingsSlice = createSlice({
     setFlightDisplayMode: (state, action: PayloadAction<'HUD' | 'VIDEO'>) => {
       state.flightDisplayMode = action.payload;
       state.flightDisplayManual = true;
-      if (state.mainViewMode !== 'MAP') state.mainViewMode = action.payload;
+      // This reducer represents an explicit pilot tap. HUD/VIDEO must therefore
+      // leave MAP immediately; only automatic video lifecycle changes preserve
+      // the currently selected MAP view.
+      state.mainViewMode = action.payload;
     },
     setAutomaticFlightDisplay: (state, action: PayloadAction<'HUD' | 'VIDEO'>) => {
       if (state.flightDisplayManual) return;
@@ -234,9 +247,11 @@ export const {
   updateAiSettings,
   setAiAssistantOpen,
   toggleAiAssistant,
+  markSettingsHydrated,
 } = settingsSlice.actions;
 
 export const selectShowJoysticks = (state: RootState) => state.settings.showJoysticks;
+export const selectSettingsHydrated = (state: RootState) => state.settings.hydrated;
 export const selectShowTelemetry = (state: RootState) => state.settings.showTelemetry;
 export const selectMainViewMode = (state: RootState) => state.settings.mainViewMode;
 export const selectPrimaryFlyView = (state: RootState) => state.settings.mainViewMode === 'MAP' ? 'MAP' : 'FLIGHT';

@@ -112,9 +112,15 @@ export class MavlinkParser {
       const headerLength = isV2 ? 10 : 6;
       if (this.buffer.length - offset < headerLength + 2) break;
       const payloadLength = this.buffer[offset + 1];
-      const signatureLength = isV2 && (this.buffer[offset + 2] & 1) !== 0 ? 13 : 0;
+      const incompatFlags = isV2 ? this.buffer[offset + 2] : 0;
+      const signatureLength = isV2 && (incompatFlags & 1) !== 0 ? 13 : 0;
       const frameLength = headerLength + payloadLength + 2 + signatureLength;
       if (this.buffer.length - offset < frameLength) break;
+      if ((incompatFlags & ~0x01) !== 0) {
+        this.diagnostics.unsupportedFrames++;
+        offset += frameLength;
+        continue;
+      }
       const messageId = isV2
         ? this.buffer[offset + 7] | (this.buffer[offset + 8] << 8) | (this.buffer[offset + 9] << 16)
         : this.buffer[offset + 5];
@@ -132,7 +138,18 @@ export class MavlinkParser {
       const actual = checksum(this.buffer.slice(offset + 1, crcOffset), extra);
       if (actual !== expected) {
         this.diagnostics.crcErrors++;
-        offset += frameLength;
+        // A corrupted length/header can overlap a later valid frame. Advance by
+        // the next magic marker inside this alleged frame when present. If not,
+        // discard the known frame boundary so payload bytes are not counted as
+        // independent transport garbage or retained as a false partial frame.
+        let nextMagic = -1;
+        for (let candidate = offset + 1; candidate < offset + frameLength; candidate++) {
+          if (this.buffer[candidate] === 0xfe || this.buffer[candidate] === 0xfd) {
+            nextMagic = candidate;
+            break;
+          }
+        }
+        offset = nextMagic >= 0 ? nextMagic : offset + frameLength;
         continue;
       }
       if (signatureLength > 0) {

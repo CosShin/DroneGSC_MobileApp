@@ -194,7 +194,7 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
             tint="extraLight"
             intensity={Platform.OS === 'ios' ? 78 : 65}
             experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
-            style={StyleSheet.absoluteFillObject}
+            style={StyleSheet.absoluteFill}
           />
 
           {/* 1. Header: [ mascot ] ANITECH Copilot / Subtitle, Right: [min] [clear] [close] */}
@@ -349,12 +349,12 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
 
 const styles = StyleSheet.create({
   overlayRoot: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     zIndex: layers.modal,
     elevation: layers.modal,
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     backgroundColor: 'rgba(15, 25, 40, 0.15)',
   },
   minimizedContainer: {

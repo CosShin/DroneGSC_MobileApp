@@ -43,7 +43,8 @@ export interface DetectedMavlinkVehicle {
 export interface MavlinkVehicleState {
   systemId: number | null; componentId: number | null; armed: boolean; mode: string;
   systemStatus: number | null; latitude: number | null; longitude: number | null;
-  altitude: number | null; speed: number | null; climb: number | null;
+  altitude: number | null; altitudeMsl: number | null; relativeAltitude: number | null;
+  speed: number | null; climb: number | null;
   roll: number | null; pitch: number | null; yaw: number | null; heading: number | null;
   satellites: number | null; gpsFix: number | null; hdop: number | null;
   voltage: number | null; current: number | null; battery: number | null;
@@ -90,7 +91,8 @@ export interface MavlinkTrafficDiagnostics {
 
 const emptyState = (): MavlinkVehicleState => ({
   systemId: null, componentId: null, armed: false, mode: 'UNKNOWN', systemStatus: null,
-  latitude: null, longitude: null, altitude: null, speed: null, climb: null,
+  latitude: null, longitude: null, altitude: null, altitudeMsl: null, relativeAltitude: null,
+  speed: null, climb: null,
   roll: null, pitch: null, yaw: null, heading: null, satellites: null, gpsFix: null,
   hdop: null, voltage: null, current: null, battery: null, batteryUpdatedAt: null,
   sensorsPresent: null, sensorsEnabled: null, sensorsHealth: null,
@@ -233,6 +235,7 @@ export class MavlinkManager {
   }
 
   getState() { return { ...this.state, messageTimestamps: { ...this.state.messageTimestamps } }; }
+  getSessionId() { return this.sessionId; }
   getParserDiagnostics(): MavlinkParserDiagnostics { return this.parser.getDiagnostics(); }
   getTransportDiagnostics(): TransportDiagnostics | null { return this.transport?.getDiagnostics?.() ?? null; }
   getTrafficDiagnostics(): MavlinkTrafficDiagnostics {
@@ -342,10 +345,11 @@ export class MavlinkManager {
     if (this.state.systemId === null) throw new Error('NO_VEHICLE');
     const payload = new Uint8Array(11);
     const view = new DataView(payload.buffer);
-    view.setInt16(0, Math.round(this.clamp(input.pitch, -1, 1) * 1000), true);
-    view.setInt16(2, Math.round(this.clamp(input.roll, -1, 1) * 1000), true);
-    view.setInt16(4, Math.round(this.clamp(input.throttle, 0, 1) * 1000), true);
-    view.setInt16(6, Math.round(this.clamp(input.yaw, -1, 1) * 1000), true);
+    const invalid = 32767;
+    view.setInt16(0, input.validAxes.pitch ? Math.round(this.clamp(input.pitch, -1, 1) * 1000) : invalid, true);
+    view.setInt16(2, input.validAxes.roll ? Math.round(this.clamp(input.roll, -1, 1) * 1000) : invalid, true);
+    view.setInt16(4, input.validAxes.throttle ? Math.round(this.clamp(input.throttle, 0, 1) * 1000) : invalid, true);
+    view.setInt16(6, input.validAxes.yaw ? Math.round(this.clamp(input.yaw, -1, 1) * 1000) : invalid, true);
     view.setUint16(8, 0, true);
     payload[10] = this.state.systemId;
     await this.sendFrame(69, payload);
@@ -417,7 +421,9 @@ export class MavlinkManager {
     this.state.bytesRx += data.length;
     this.rxBytesThisSecond += data.length;
     const unsupportedBefore = this.parser.getDiagnostics().unsupportedFrames;
-    const frames = this.parser.push(data);
+    const frames = this.transport?.kind === 'UDP'
+      ? this.parser.pushDatagram(data)
+      : this.parser.push(data);
     if (this.parser.getDiagnostics().unsupportedFrames > unsupportedBefore) {
       // Unknown dialect frames consume sequence numbers too. Reset the loss
       // baseline so a received-but-unsupported frame is not counted as lost.
@@ -486,7 +492,10 @@ export class MavlinkManager {
     } else if (frame.messageId === 33 && frame.payload.length >= 28) {
       this.state.latitude = view.getInt32(4, true) / 1e7;
       this.state.longitude = view.getInt32(8, true) / 1e7;
-      this.state.altitude = view.getInt32(16, true) / 1000;
+      this.state.altitudeMsl = view.getInt32(12, true) / 1000;
+      this.state.relativeAltitude = view.getInt32(16, true) / 1000;
+      // Existing flight UI altitude is height above Home, not absolute elevation.
+      this.state.altitude = this.state.relativeAltitude;
       this.state.speed = Math.hypot(view.getInt16(20, true), view.getInt16(22, true)) / 100;
       this.state.climb = -view.getInt16(24, true) / 100;
       const heading = view.getUint16(26, true);

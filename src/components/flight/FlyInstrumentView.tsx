@@ -1,13 +1,12 @@
 import React, { useMemo } from 'react';
-import { StyleSheet, Text, View, Animated } from 'react-native';
+import { Animated, Image, StyleSheet, Text, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppSelector } from '../../store/hooks';
-import { 
-  selectRoll, selectPitch, selectYaw, selectAltitude, 
-  selectGroundSpeed, selectVerticalSpeed, selectSatellites, selectGpsFix,
-  selectBatteryPercentage, selectHeading 
+import {
+  selectRoll, selectPitch, selectYaw, selectAltitude,
+  selectGroundSpeed, selectVerticalSpeed, selectHeading, selectTelemetryStale,
 } from '../../store/telemetry/telemetrySlice';
-import { selectPacketsPerSec, selectConnectionStatus } from '../../store/connection/connectionSlice';
+import { selectPacketsPerSec, selectConnectionStatus, selectVehicleState } from '../../store/connection/connectionSlice';
 import { useGcsLayout } from '../../hooks/useGcsLayout';
 import { glassShadow } from '../../theme/gcsTheme';
 
@@ -26,6 +25,8 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
   
   const pps = useAppSelector(selectPacketsPerSec);
   const connectionStatus = useAppSelector(selectConnectionStatus);
+  const vehicleState = useAppSelector(selectVehicleState);
+  const telemetryStale = useAppSelector(selectTelemetryStale);
 
   const isCompact = layout.isCompactLandscape || layout.contentHeight < 450;
 
@@ -36,25 +37,19 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
 
   const horizonSize = indicatorSize * 4;
 
-  const isConnected = connectionStatus === 'CONNECTED';
+  const isConnected = connectionStatus === 'CONNECTED' && vehicleState === 'CONNECTED';
+  const telemetryLive = isConnected && !telemetryStale;
+  const attitudeLive = telemetryLive && roll != null && pitch != null;
+  const displayRoll = attitudeLive ? roll : 0;
+  const displayPitch = attitudeLive ? pitch : 0;
   const rawHeading = heading ?? (yaw != null ? Math.round(((yaw % 360) + 360) % 360) : null);
-  const activeHeading = isConnected ? rawHeading : null;
+  const activeHeading = attitudeLive ? rawHeading : null;
 
-  // Compute Link Quality
-  const linkQualityPercent = useMemo(() => {
-    if (!isConnected) return null;
-    if (pps >= 15) return 98;
-    if (pps >= 8) return 85;
-    if (pps >= 4) return 65;
-    return 40;
-  }, [isConnected, pps]);
-
-  const linkQualityLabel = useMemo(() => {
+  const linkActivityLabel = useMemo(() => {
     if (!isConnected) return 'Disconnected';
-    if (linkQualityPercent != null && linkQualityPercent >= 80) return 'Strong';
-    if (linkQualityPercent != null && linkQualityPercent >= 50) return 'Good';
-    return 'Weak';
-  }, [isConnected, linkQualityPercent]);
+    if (telemetryStale) return 'Stale';
+    return pps > 0 ? 'Receiving' : 'No traffic';
+  }, [isConnected, pps, telemetryStale]);
 
   // Roll arc ticks (0°, 10°, 20°, 30°, 45°, 60°)
   const rollTicks = useMemo(() => [
@@ -73,8 +68,16 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
 
   return (
     <View style={styles.container} pointerEvents="box-none">
-      {/* 1. Continuous Daylight Frosted Canvas */}
-      <View style={styles.daylightCanvas} pointerEvents="none" />
+      {/* 1. HUD background — bundled locally so it works offline on the aircraft link. */}
+      <View style={styles.hudBackgroundFrame} pointerEvents="none">
+        <Image
+          source={require('../../../assets/hud-background.png')}
+          style={styles.hudBackground}
+          resizeMode="cover"
+          accessible={false}
+        />
+      </View>
+      <View style={styles.backgroundWash} pointerEvents="none" />
 
       {/* 2. Main 3-Column Cockpit Workspace - Centered tightly around the circle */}
       <View style={[styles.cockpitGrid, isCompact && styles.cockpitGridCompact]} pointerEvents="box-none">
@@ -89,7 +92,7 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
             </View>
             <View style={styles.valueRow}>
               <Text style={[styles.mainValue, isCompact && styles.mainValueCompact]}>
-                {altitude != null && isConnected ? altitude.toFixed(1) : '--'}
+                {altitude != null && telemetryLive ? altitude.toFixed(1) : '--'}
               </Text>
               <Text style={styles.unitText}>m</Text>
             </View>
@@ -103,7 +106,7 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
             </View>
             <View style={styles.valueRow}>
               <Text style={[styles.mainValue, isCompact && styles.mainValueCompact]}>
-                {groundSpeed != null && isConnected ? groundSpeed.toFixed(1) : '--'}
+                {groundSpeed != null && telemetryLive ? groundSpeed.toFixed(1) : '--'}
               </Text>
               <Text style={styles.unitText}>m/s</Text>
             </View>
@@ -118,7 +121,8 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
           {/* Circular Artificial Horizon Instrument */}
           <View 
             style={[
-              styles.bezelCircle, 
+              styles.bezelCircle,
+              !attitudeLive && styles.bezelUnavailable,
               { 
                 width: indicatorSize, 
                 height: indicatorSize, 
@@ -130,6 +134,7 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
             <Animated.View
               style={[
                 styles.movingHorizon,
+                !attitudeLive && styles.hiddenAttitude,
                 {
                   width: horizonSize,
                   height: horizonSize,
@@ -138,8 +143,8 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
                   marginLeft: -horizonSize / 2,
                   marginTop: -horizonSize / 2,
                   transform: [
-                    { rotateZ: `${-roll}deg` },
-                    { translateY: pitch * PITCH_SCALE }
+                    { rotateZ: `${-displayRoll}deg` },
+                    { translateY: displayPitch * PITCH_SCALE }
                   ],
                 },
               ]}
@@ -186,6 +191,12 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
                 ))}
               </View>
             </Animated.View>
+
+            {!attitudeLive ? (
+              <View style={styles.attitudeUnavailable}>
+                <Text style={styles.attitudeUnavailableText}>ATTITUDE --</Text>
+              </View>
+            ) : null}
 
             {/* Static Bank Angle Scale (Outer Rim Ticks & Triangle Index) */}
             <View style={styles.rollScaleOverlay}>
@@ -243,7 +254,7 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
             {/* West Readout */}
             <View style={styles.headingSideCol}>
               <Text style={styles.headingCardinal}>W</Text>
-              <Text style={styles.headingSubVal}>{isConnected ? '270' : '--'}</Text>
+              <Text style={styles.headingSubVal}>{attitudeLive ? '270' : '--'}</Text>
             </View>
 
             {/* Divider */}
@@ -262,7 +273,7 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
             {/* North Readout */}
             <View style={styles.headingSideCol}>
               <Text style={styles.headingCardinal}>N</Text>
-              <Text style={styles.headingSubVal}>{isConnected ? '0' : '--'}</Text>
+              <Text style={styles.headingSubVal}>{attitudeLive ? '0' : '--'}</Text>
             </View>
           </View>
         </View>
@@ -277,24 +288,25 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
             </View>
             <View style={styles.valueRow}>
               <Text style={[styles.mainValue, isCompact && styles.mainValueCompact]}>
-                {verticalSpeed != null && isConnected ? verticalSpeed.toFixed(1) : '--'}
+                {verticalSpeed != null && telemetryLive ? verticalSpeed.toFixed(1) : '--'}
               </Text>
               <Text style={styles.unitText}>m/s</Text>
             </View>
           </View>
 
-          {/* LINK QUALITY Card */}
+          {/* Actual observed MAVLink traffic; packet rate is not a radio-quality percentage. */}
           <View style={[styles.card, isCompact && styles.cardCompact]}>
             <View style={styles.cardHeader}>
               <MaterialCommunityIcons name="access-point" size={11} color="#10B981" />
-              <Text style={styles.cardLabel}>LINK QUALITY</Text>
+              <Text style={styles.cardLabel}>MAVLINK RATE</Text>
             </View>
             <View style={styles.valueRow}>
               <Text style={[styles.mainValue, isCompact && styles.mainValueCompact]}>
-                {linkQualityPercent != null ? `${linkQualityPercent}%` : '--'}
+                {telemetryLive ? pps : '--'}
               </Text>
+              {telemetryLive ? <Text style={styles.unitText}>pps</Text> : null}
             </View>
-            <Text style={styles.linkStatusText}>{linkQualityLabel}</Text>
+            <Text style={styles.linkStatusText}>{linkActivityLabel}</Text>
           </View>
 
           {/* Right spacer for joystick bounding clearance */}
@@ -308,20 +320,27 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
 
 const styles = StyleSheet.create({
   container: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     backgroundColor: '#EDF4FB',
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  daylightCanvas: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#E8F1FA',
+  hudBackgroundFrame: {
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
+  },
+  hudBackground: {
+    width: '100%',
+    height: '100%',
+  },
+  backgroundWash: {
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
+    backgroundColor: 'rgba(232, 241, 250, 0.16)',
   },
   cockpitGrid: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'center',
     gap: 20,
     paddingTop: 48,
@@ -426,6 +445,28 @@ const styles = StyleSheet.create({
   movingHorizon: {
     position: 'absolute',
   },
+  hiddenAttitude: {
+    opacity: 0,
+  },
+  bezelUnavailable: {
+    backgroundColor: 'rgba(100, 116, 139, 0.28)',
+  },
+  attitudeUnavailable: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 4,
+  },
+  attitudeUnavailableText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
   skyHalf: {
     position: 'absolute',
     top: 0,
@@ -452,7 +493,7 @@ const styles = StyleSheet.create({
     marginTop: -1.25,
   },
   pitchLadder: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -482,7 +523,7 @@ const styles = StyleSheet.create({
   },
 
   rollScaleOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 15,

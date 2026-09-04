@@ -45,7 +45,7 @@ export function GlassSurface({
         intensity={intensityValue}
         experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
         blurReductionFactor={Platform.OS === 'android' ? 4 : undefined}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       />
       <View style={styles.innerHighlight} pointerEvents="none" />
       <View style={[styles.content, fill && styles.fill, contentStyle]}>{children}</View>
@@ -74,7 +74,7 @@ const styles = StyleSheet.create({
     backgroundColor: glass.backgroundStrong,
   },
   innerHighlight: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.34)',
   },

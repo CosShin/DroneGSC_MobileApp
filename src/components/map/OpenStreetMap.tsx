@@ -15,6 +15,7 @@ export interface MapPhonePosition extends MapPosition {
 }
 
 interface Props {
+  active?: boolean;
   vehiclePosition?: MapPosition | null;
   phonePosition?: MapPhonePosition | null;
   homePosition?: MapPosition | null;
@@ -90,6 +91,7 @@ const MAP_HTML = `<!doctype html>
     let lastFit = -1;
     let lastCenterHome = -1;
     let editable = false;
+    let lastMissionSignature = '';
 
     const send = data => window.ReactNativeWebView.postMessage(JSON.stringify(data));
 
@@ -102,36 +104,41 @@ const MAP_HTML = `<!doctype html>
       editable = !!d.editable;
 
       // 1. Mission Route & Waypoints
-      missionMarkers.forEach(m => map.removeLayer(m));
-      missionMarkers = [];
-      if (missionPath) { map.removeLayer(missionPath); missionPath = null; }
-
       const pts = (d.waypoints || []).map(w => [w.lat, w.lng]);
-      if (pts.length) {
-        missionPath = L.polyline(pts, { color: '#1687f8', weight: 4, opacity: 0.85 }).addTo(map);
-      }
+      const missionSignature = JSON.stringify([d.waypoints || [], d.selectedWaypointId || null, editable]);
+      if (missionSignature !== lastMissionSignature) {
+        lastMissionSignature = missionSignature;
+        missionMarkers.forEach(m => map.removeLayer(m));
+        missionMarkers = [];
+        if (missionPath) { map.removeLayer(missionPath); missionPath = null; }
+        if (pts.length) {
+          missionPath = L.polyline(pts, { color: '#1687f8', weight: 4, opacity: 0.85 }).addTo(map);
+        }
 
-      (d.waypoints || []).forEach((w, i) => {
-        const selected = w.id === d.selectedWaypointId;
-        const icon = L.divIcon({
-          className: '',
-          html: '<div class="wp ' + (selected ? 'selected' : '') + '">' + (i + 1) + '</div>',
-          iconSize: [26, 26],
-          iconAnchor: [13, 13]
+        (d.waypoints || []).forEach((w, i) => {
+          const selected = w.id === d.selectedWaypointId;
+          const icon = L.divIcon({
+            className: '',
+            html: '<div class="wp ' + (selected ? 'selected' : '') + '">' + (i + 1) + '</div>',
+            iconSize: [26, 26],
+            iconAnchor: [13, 13]
+          });
+          const m = L.marker([w.lat, w.lng], { icon, draggable: editable }).addTo(map);
+          m.on('click', () => send({ type: 'waypointPress', id: w.id }));
+          m.on('dragend', e => {
+            const p = e.target.getLatLng();
+            send({ type: 'waypointMove', id: w.id, latitude: p.lat, longitude: p.lng });
+          });
+          missionMarkers.push(m);
         });
-        const m = L.marker([w.lat, w.lng], { icon, draggable: editable }).addTo(map);
-        m.on('click', () => send({ type: 'waypointPress', id: w.id }));
-        m.on('dragend', e => {
-          const p = e.target.getLatLng();
-          send({ type: 'waypointMove', id: w.id, latitude: p.lat, longitude: p.lng });
-        });
-        missionMarkers.push(m);
-      });
+      }
 
       // 2. Vehicle Position Marker
       if (d.vehiclePosition && d.vehiclePosition.latitude != null && d.vehiclePosition.longitude != null) {
-        const vYaw = d.yaw || 0;
-        const vHtml = '<div class="vehicle-marker" style="transform: rotate(' + vYaw + 'deg)"><div class="vehicle-arrow">▲</div></div>';
+        const hasYaw = Number.isFinite(d.yaw);
+        const vHtml = hasYaw
+          ? '<div class="vehicle-marker" style="transform: rotate(' + d.yaw + 'deg)"><div class="vehicle-arrow">▲</div></div>'
+          : '<div class="vehicle-marker"><div class="vehicle-arrow">●</div></div>';
         const vIcon = L.divIcon({ className: '', html: vHtml, iconSize: [34, 34], iconAnchor: [17, 17] });
         if (!vehicleMarker) {
           vehicleMarker = L.marker([d.vehiclePosition.latitude, d.vehiclePosition.longitude], { icon: vIcon, zIndexOffset: 1200 }).addTo(map);
@@ -233,7 +240,7 @@ export function OpenStreetMap(props: Props) {
     phonePosition: props.phonePosition ?? null,
     homePosition: props.homePosition ?? null,
     previewHomePosition: props.previewHomePosition ?? null,
-    yaw: props.yaw ?? 0,
+    yaw: props.yaw ?? null,
     waypoints: props.waypoints,
     selectedWaypointId: props.selectedWaypointId ?? null,
     followVehicle: props.followVehicle ?? false,
@@ -243,8 +250,8 @@ export function OpenStreetMap(props: Props) {
   });
 
   React.useEffect(() => {
-    if (ready) webRef.current?.postMessage(payload);
-  }, [payload, ready]);
+    if (ready && (props.active ?? true)) webRef.current?.postMessage(payload);
+  }, [payload, props.active, ready]);
 
   const onMessage = (event: WebViewMessageEvent) => {
     try {
@@ -283,7 +290,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#07111F' },
   webview: { flex: 1, backgroundColor: '#07111F' },
   loading: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,

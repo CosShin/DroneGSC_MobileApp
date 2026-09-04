@@ -665,7 +665,7 @@ function About() {
       <Heading title="About" copy="Application and live link diagnostics." />
       <Panel>
         <Row label="App" value="ANITECH GCS 1.0.0" />
-        <Row label="Expo" value="SDK 54" />
+        <Row label="Expo" value="SDK 57" />
         <Row label="Link" value={status} />
         <Row label="MAVLink" value={mavlink} />
         <Row label="Traffic" value={`${pps} packets/s`} />

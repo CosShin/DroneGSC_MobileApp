@@ -120,21 +120,39 @@ export class MavlinkCommandService implements CommandService {
     ack: CommandResult,
   ) {
     return new Promise<CommandResult>(resolve => {
-      if (matches(universalConnectionService.getState())) {
-        resolve(this.result(command, 'ACCEPTED', ack));
-        return;
-      }
-      const unsubscribe = universalConnectionService.onTelemetry(value => {
-        if (!value.stale && matches(value)) {
-          clearTimeout(timeout);
-          unsubscribe();
-          resolve(this.result(command, 'ACCEPTED', ack));
+      const sessionId = universalConnectionService.getMavlinkSessionId();
+      const acceptedAt = ack.ackAt ?? Date.now();
+      let settled = false;
+      let unsubscribeTelemetry = () => {};
+      let unsubscribeStatus = () => {};
+      const finish = (result: CommandResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        unsubscribeTelemetry();
+        unsubscribeStatus();
+        resolve(result);
+      };
+      const confirm = (value: ReturnType<typeof universalConnectionService.getState>) => {
+        if (universalConnectionService.getMavlinkSessionId() !== sessionId) {
+          finish(this.result(command, 'FAILED', { ...ack, error: 'VEHICLE_SESSION_CHANGED' }));
+          return;
+        }
+        const confirmedAfterAck = value.lastHeartbeatAt != null && value.lastHeartbeatAt > acceptedAt;
+        if (universalConnectionService.isVehicleFresh() && !value.stale && confirmedAfterAck && matches(value)) {
+          finish(this.result(command, 'ACCEPTED', ack));
+        }
+      };
+      unsubscribeTelemetry = universalConnectionService.onTelemetry(confirm);
+      unsubscribeStatus = universalConnectionService.onStatusChange(status => {
+        if (status === 'DISCONNECTED' || status === 'ERROR') {
+          finish(this.result(command, 'FAILED', { ...ack, error: 'VEHICLE_CONNECTION_LOST' }));
         }
       });
       const timeout = setTimeout(() => {
-        unsubscribe();
-        resolve(this.result(command, 'TIMEOUT', { ...ack, success: false, error: 'VEHICLE_CONFIRMATION_TIMEOUT' }));
+        finish(this.result(command, 'TIMEOUT', { ...ack, error: 'VEHICLE_CONFIRMATION_TIMEOUT' }));
       }, 5_000);
+      confirm(universalConnectionService.getState());
     });
   }
 }

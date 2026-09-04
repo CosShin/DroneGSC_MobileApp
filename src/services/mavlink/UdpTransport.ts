@@ -11,6 +11,11 @@ import {
 } from './MavlinkTransport';
 
 type NativeRemoteInfo = { address: string; port: number };
+type UdpSocketWithEvents = UdpSocket & {
+  on(event: 'error', listener: (error: unknown) => void): UdpSocketWithEvents;
+  on(event: 'message', listener: (message: Uint8Array, info: NativeRemoteInfo) => void): UdpSocketWithEvents;
+  once(event: 'listening', listener: () => void): UdpSocketWithEvents;
+};
 
 function validPort(value: number | undefined): value is number {
   return Number.isInteger(value) && (value ?? 0) > 0 && (value ?? 0) <= 65535;
@@ -25,7 +30,7 @@ function validPort(value: number | undefined): value is number {
  */
 export class UdpTransport implements MavlinkTransport {
   readonly kind = 'UDP' as const;
-  private socket: UdpSocket | null = null;
+  private socket: UdpSocketWithEvents | null = null;
   private remote: TransportRemoteInfo | null = null;
   private status: TransportStatus = 'IDLE';
   private dataListeners = new Set<TransportDataListener>();
@@ -66,7 +71,7 @@ export class UdpTransport implements MavlinkTransport {
     this.setStatus('OPENING');
 
     return new Promise<void>((resolve, reject) => {
-      const socket = dgram.createSocket({ type: 'udp4', reusePort: true });
+      const socket = dgram.createSocket({ type: 'udp4', reusePort: true }) as UdpSocketWithEvents;
       this.socket = socket;
       let settled = false;
 

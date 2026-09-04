@@ -91,7 +91,8 @@
           "microphonePermission": "ANITECH GCS requires microphone access for pilot voice assistance.",
           "speechRecognitionPermission": "ANITECH GCS uses speech recognition to analyze flight inquiries and status queries."
         }
-      ]
+      ],
+      "expo-status-bar"
     ],
     "extra": {
       "eas": {

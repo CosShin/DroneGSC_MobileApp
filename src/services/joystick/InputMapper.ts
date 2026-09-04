@@ -37,6 +37,12 @@ export class InputMapper {
       pitch,
       yaw,
       throttle,
+      validAxes: {
+        roll: rightStick.active,
+        pitch: rightStick.active,
+        yaw: leftStick.active,
+        throttle: leftStick.active,
+      },
       timestamp: Date.now(),
     };
   }
