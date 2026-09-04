@@ -21,10 +21,6 @@ expo-env.d.ts
 # Metro
 .metro-health-check*
 
-# debug
-npm-debug.*
-yarn-debug.*
-yarn-error.*
 
 # macOS
 .DS_Store
@@ -47,11 +43,31 @@ tools/streamer/mediamtx/mediamtx.exe
 
 # Streamer generated files
 tools/streamer/hls/
+# Python virtual environments & caches
+.venv/
 __pycache__/
 tools/__pycache__/
+*.pyc
 
-# Validation & test artifacts
+# Logs & coverage
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+coverage/
+
+# Validation, temp & test artifacts
+.validation/
+.validation*/
 .validation-*
+.validation-*.png
+.validation-*.xml
+.validation-*.uixml
+tmp/
+artifacts/
+
+# Local tools, external repos & screenshots
 .codegraph/
+.claude/
 codegrab/
 ChatGPT Image*.png

@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$ToolsDir = "D:\ANITECH GCS\tools\streamer"
+$ToolsDir = $PSScriptRoot
 if (!(Test-Path $ToolsDir)) {
     New-Item -ItemType Directory -Force -Path $ToolsDir | Out-Null
 }
