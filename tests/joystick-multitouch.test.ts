@@ -7,6 +7,8 @@ import {
   selectStartingTouch,
   shouldReleaseTrackedTouch,
 } from '../src/components/joystick/JoystickTouchTracker';
+import { buildReleasedStickNeutralFrame } from '../src/services/joystick/JoystickNeutralFrames';
+import type { FlightControlInput } from '../src/types/joystick';
 
 test('InputMapper maps both sticks simultaneously when both are active (4-axis non-zero)', () => {
   const leftStick: JoystickInput = {
@@ -174,4 +176,41 @@ test('Simultaneous touch tracking: only ending the tracked finger releases the s
 
   assert.equal(shouldReleaseTrackedTouch([left], [right], 2), false);
   assert.equal(shouldReleaseTrackedTouch([right], [left], 2), true);
+});
+
+test('Joystick release builds a left-stick neutral frame without overwriting right-stick axes', () => {
+  const previous: FlightControlInput = {
+    roll: 0.4,
+    pitch: -0.3,
+    yaw: 0.8,
+    throttle: 0.9,
+    validAxes: { roll: true, pitch: true, yaw: true, throttle: true },
+    timestamp: 100,
+  };
+
+  const neutral = buildReleasedStickNeutralFrame(previous, 'LEFT', 200);
+
+  assert.equal(neutral.yaw, 0);
+  assert.equal(neutral.throttle, 0.5);
+  assert.deepEqual(neutral.validAxes, { roll: false, pitch: false, yaw: true, throttle: true });
+  assert.equal(neutral.timestamp, 200);
+});
+
+test('Joystick release builds a right-stick neutral frame while preserving left-stick throttle authority', () => {
+  const previous: FlightControlInput = {
+    roll: -0.6,
+    pitch: 0.7,
+    yaw: -0.5,
+    throttle: 0.8,
+    validAxes: { roll: true, pitch: true, yaw: true, throttle: true },
+    timestamp: 100,
+  };
+
+  const neutral = buildReleasedStickNeutralFrame(previous, 'RIGHT', 300);
+
+  assert.equal(neutral.roll, 0);
+  assert.equal(neutral.pitch, 0);
+  assert.equal(neutral.throttle, 0.5);
+  assert.deepEqual(neutral.validAxes, { roll: true, pitch: true, yaw: false, throttle: false });
+  assert.equal(neutral.timestamp, 300);
 });

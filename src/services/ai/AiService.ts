@@ -25,8 +25,28 @@ import { aiSpeechService } from '../voice/AiSpeechService';
 import { processSemanticResponse } from './semantic/SemanticResponseProcessor';
 import { buildSpokenResponse } from '../voice/SpokenResponseBuilder';
 import type { SemanticStructuredCard, SpeechTone } from './AiTypes';
+import { routeAniIntent, type AniIntent, type AniRoute } from './AniIntentRouter';
+import { buildAniToolSnapshot, type AniToolSnapshot } from './AniToolbox';
+import {
+  buildArmDiagnostics,
+  buildConnectionDoctor,
+  buildFlightDebrief,
+  buildHealthCheck,
+  buildMavlinkDoctor,
+  buildPreflight,
+  buildWhatsHappening,
+  type AniDeterministicResponse,
+} from './AniDiagnostics';
+import { buildParameterAssistantResponse } from './ParameterAssistant';
 
 let lazyStore: { getState: () => RootState } | null = null;
+let messageSequence = 0;
+
+function nextMessageId(prefix: string) {
+  messageSequence = (messageSequence + 1) % Number.MAX_SAFE_INTEGER;
+  return `${prefix}-${Date.now()}-${messageSequence}`;
+}
+
 function getStoreState(): RootState | null {
   if (!lazyStore) {
     try {
@@ -46,10 +66,14 @@ export interface AiServiceState {
 }
 
 const QUICK_ACTION_LABELS: Record<AiQuickActionType, string> = {
+  WHATS_HAPPENING: "What's happening?",
+  SYSTEM_HEALTH: 'ANI Health Check',
   PREFLIGHT: '🛫 Preflight Check',
   WHY_CANT_ARM: "⚠️ Why Can't I Arm?",
+  CONNECTION_DOCTOR: 'Connection Doctor',
   MAVLINK_CHECK: '📊 Check MAVLink Telemetry',
   MISSION_REVIEW: '🗺️ Review Mission Plan',
+  FLIGHT_DEBRIEF: 'Flight Debrief',
   ANALYZE_CAMERA: '📷 Phân tích Camera',
   CHECK_LANDING_MARKER: '🎯 Landing Marker',
 };
@@ -63,6 +87,11 @@ class AiService {
   private customStore: { getState: () => any } | null = null;
 
   setStore(s: { getState: () => any } | null) {
+    if (this.currentAbortController) {
+      this.currentAbortController.abort();
+      this.currentAbortController = null;
+    }
+    this.isThinking = false;
     this.customStore = s;
   }
 
@@ -117,7 +146,7 @@ class AiService {
   clearHistory() {
     this.messages = [
       {
-        id: `welcome-${Date.now()}`,
+        id: nextMessageId('welcome'),
         role: 'assistant',
         content: 'Lịch sử hội thoại đã được xóa. Tôi sẵn sàng tiếp nhận yêu cầu mới.',
         timestamp: Date.now(),
@@ -191,24 +220,21 @@ class AiService {
       return;
     }
 
-    // 1. Capture contextual snapshot strictly on demand
-    const contextSnapshot = buildFlightContext(this.customStore?.getState() ?? undefined);
+    const route = routeAniIntent(trimmed);
+    if (route.intent === 'VISION_QUERY') {
+      await this.sendVisionQuery(trimmed);
+      return;
+    }
 
-    // 2. Add User Message to History
-    const userMsgId = `user-${Date.now()}`;
-    const userMsg: AiChatMessage = {
-      id: userMsgId,
-      role: 'user',
-      content: trimmed,
-      timestamp: Date.now(),
-      status: 'success',
-    };
-    this.messages.push(userMsg);
-    this.messages = trimConversationHistory(this.messages, 15);
+    this.addUserMessage(trimmed);
 
-    // 3. Prepare payload
-    const contextualUserPrompt = buildUserMessageWithContext(trimmed, contextSnapshot);
-    await this.executePrompt(contextualUserPrompt, settings);
+    const state = this.customStore?.getState() ?? getStoreState();
+    if (route.deterministic && state) {
+      this.addDeterministicResponse(this.buildDeterministicResponse(route.intent, buildAniToolSnapshot(state), trimmed));
+      return;
+    }
+
+    await this.executePrompt(this.buildPromptForRoute(trimmed, route, state), settings);
   }
 
   async executeQuickAction(actionType: AiQuickActionType): Promise<void> {
@@ -229,7 +255,7 @@ class AiService {
       const advisory = precisionLandingAdvisor.getAdvisoryDescription('vi-VN');
       const actionLabel = QUICK_ACTION_LABELS[actionType] || actionType;
       this.messages.push({
-        id: `action-${Date.now()}`,
+        id: nextMessageId('action'),
         role: 'user',
         content: actionLabel,
         timestamp: Date.now(),
@@ -252,7 +278,7 @@ class AiService {
       };
 
       this.messages.push({
-        id: `asst-${Date.now()}`,
+        id: nextMessageId('asst'),
         role: 'assistant',
         content: `🎯 [TRẠNG THÁI PRECISION LANDING]\n\n${advisory}\n\n*Lưu ý: Hệ thống hạ cánh chính xác được điều khiển tự động bởi ArduPilot autopilot (PLND). AI cung cấp thông tin thị giác giám sát cho phi công.*`,
         structuredCard: card,
@@ -267,13 +293,22 @@ class AiService {
       return;
     }
 
+    const deterministicIntent = this.intentForQuickAction(actionType);
+    const state = this.customStore?.getState() ?? getStoreState();
+    if (deterministicIntent && state) {
+      const actionLabel = QUICK_ACTION_LABELS[actionType] || actionType;
+      this.addUserMessage(actionLabel);
+      this.addDeterministicResponse(this.buildDeterministicResponse(deterministicIntent, buildAniToolSnapshot(state), actionLabel));
+      return;
+    }
+
     // 1. Capture snapshot strictly on demand
     const contextSnapshot = buildFlightContext(this.customStore?.getState() ?? undefined);
 
     // 2. Add action label as user query in UI
     const actionLabel = QUICK_ACTION_LABELS[actionType] || actionType;
     const userMsg: AiChatMessage = {
-      id: `action-${Date.now()}`,
+      id: nextMessageId('action'),
       role: 'user',
       content: actionLabel,
       timestamp: Date.now(),
@@ -354,14 +389,14 @@ class AiService {
     // 1. Check Vision Capability of selected model
     if (!metadata.supportsVision) {
       this.messages.push({
-        id: `user-${Date.now()}`,
+        id: nextMessageId('user'),
         role: 'user',
         content: `📷 ${prompt}`,
         timestamp: Date.now(),
         status: 'success',
       });
       this.messages.push({
-        id: `vision-unsupported-${Date.now()}`,
+        id: nextMessageId('vision-unsupported'),
         role: 'assistant',
         content: `VISION NOT AVAILABLE FOR CURRENT MODEL\n\nMô hình ${settings.model} (${metadata.execution}) hiện tại không hỗ trợ phân tích hình ảnh.\nVui lòng chuyển sang mô hình có hỗ trợ Vision (ví dụ: Gemma 4 Cloud hoặc model Vision trên PC).`,
         timestamp: Date.now(),
@@ -379,7 +414,7 @@ class AiService {
     }
 
     // 3. Add user message with captured image preview
-    const userMsgId = `user-vision-${Date.now()}`;
+    const userMsgId = nextMessageId('user-vision');
     this.messages.push({
       id: userMsgId,
       role: 'user',
@@ -402,7 +437,7 @@ class AiService {
     settings: ReturnType<typeof selectAiSettings>,
     attachedImages?: string[],
   ): Promise<void> {
-    const assistantMsgId = `asst-${Date.now()}`;
+    const assistantMsgId = nextMessageId('asst');
     const assistantMsg: AiChatMessage = {
       id: assistantMsgId,
       role: 'assistant',
@@ -550,9 +585,103 @@ class AiService {
     }
   }
 
+  private addUserMessage(content: string) {
+    this.messages.push({
+      id: nextMessageId('user'),
+      role: 'user',
+      content,
+      timestamp: Date.now(),
+      status: 'success',
+    });
+    this.messages = trimConversationHistory(this.messages, 15);
+  }
+
+  private addDeterministicResponse(response: AniDeterministicResponse) {
+    this.messages.push({
+      id: nextMessageId('asst'),
+      role: 'assistant',
+      content: response.content,
+      timestamp: Date.now(),
+      status: 'success',
+      structuredCard: response.structuredCard,
+      spokenText: response.spokenText,
+      tone: response.tone,
+    });
+    this.messages = trimConversationHistory(this.messages, 15);
+    this.diagnostics.status = 'READY';
+    this.diagnostics.lastError = null;
+    this.diagnostics.lastTestedAt = Date.now();
+    this.emit();
+  }
+
+  private buildPromptForRoute(prompt: string, route: AniRoute, state: RootState | null) {
+    if (!route.requiresFlightContext || !state) {
+      return `### ANI ROUTE
+intent: ${route.intent}
+confidence: ${route.confidence.toFixed(2)}
+
+### USER QUERY:
+${prompt}`;
+    }
+
+    const contextSnapshot = buildFlightContext(state);
+    return `${buildUserMessageWithContext(prompt, contextSnapshot)}
+
+### ANI ROUTE:
+intent: ${route.intent}
+confidence: ${route.confidence.toFixed(2)}
+reason: ${route.reason}
+
+Use the snapshot only for live vehicle facts. For unavailable metrics, say they are unavailable.`;
+  }
+
+  private intentForQuickAction(actionType: AiQuickActionType): AniIntent | null {
+    switch (actionType) {
+      case 'WHATS_HAPPENING':
+        return 'VEHICLE_STATUS';
+      case 'SYSTEM_HEALTH':
+        return 'SYSTEM_HEALTH';
+      case 'PREFLIGHT':
+        return 'PREFLIGHT';
+      case 'WHY_CANT_ARM':
+        return 'ARM_DIAGNOSTICS';
+      case 'CONNECTION_DOCTOR':
+        return 'CONNECTION_DIAGNOSTICS';
+      case 'MAVLINK_CHECK':
+        return 'MAVLINK_DIAGNOSTICS';
+      case 'FLIGHT_DEBRIEF':
+        return 'FLIGHT_DEBRIEF';
+      default:
+        return null;
+    }
+  }
+
+  private buildDeterministicResponse(intent: AniIntent, snapshot: AniToolSnapshot, prompt = ''): AniDeterministicResponse {
+    switch (intent) {
+      case 'SYSTEM_HEALTH':
+        return buildHealthCheck(snapshot);
+      case 'PREFLIGHT':
+        return buildPreflight(snapshot);
+      case 'ARM_DIAGNOSTICS':
+        return buildArmDiagnostics(snapshot);
+      case 'CONNECTION_DIAGNOSTICS':
+        return buildConnectionDoctor(snapshot);
+      case 'MAVLINK_DIAGNOSTICS':
+        return buildMavlinkDoctor(snapshot);
+      case 'PARAMETER_QUERY':
+      case 'PARAMETER_PROPOSAL':
+        return buildParameterAssistantResponse(prompt, snapshot);
+      case 'FLIGHT_DEBRIEF':
+        return buildFlightDebrief(snapshot);
+      case 'VEHICLE_STATUS':
+      default:
+        return buildWhatsHappening(snapshot);
+    }
+  }
+
   private addErrorMessage(text: string) {
     this.messages.push({
-      id: `err-${Date.now()}`,
+      id: nextMessageId('err'),
       role: 'assistant',
       content: `⚠️ ${text}`,
       timestamp: Date.now(),

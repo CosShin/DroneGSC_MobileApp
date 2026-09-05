@@ -6,6 +6,7 @@ import { selectPacketsPerSec, selectBytesReceived, selectMavlinkState, selectCon
 import { universalConnectionService } from '../../services/connection/UniversalConnectionService';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { glassShadow, layers, radius } from '../../theme/gcsTheme';
+import { DraggableFloatingControl } from './DraggableFloatingControl';
 
 export function DiagnosticsOverlay() {
   const [visible, setVisible] = useState(false);
@@ -31,66 +32,72 @@ export function DiagnosticsOverlay() {
 
   if (!visible) {
     return (
-      <TouchableOpacity 
-        accessibilityLabel="Open diagnostics" 
-        style={styles.miniBtn} 
+      <DraggableFloatingControl
+        initialPosition={{ x: 32, y: 152 }}
+        style={styles.floatingRoot}
         onPress={() => setVisible(true)}
       >
-        <BlurView pointerEvents="none" tint="extraLight" intensity={64} experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined} style={StyleSheet.absoluteFill} />
-        <MaterialCommunityIcons name="bug-outline" size={15} color="#475569" />
-      </TouchableOpacity>
+        <View
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel="Open MAVLink diagnostics"
+          style={styles.miniBtn}
+        >
+          <BlurView pointerEvents="none" tint="extraLight" intensity={64} experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined} style={StyleSheet.absoluteFill} />
+          <MaterialCommunityIcons name="bug-outline" size={15} color="#475569" />
+        </View>
+      </DraggableFloatingControl>
     );
   }
 
   const diag = universalConnectionService.getDiagnostics();
 
   return (
-    <View style={styles.container}>
-      <BlurView pointerEvents="none" tint="extraLight" intensity={72} experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined} style={StyleSheet.absoluteFill} />
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>MAVLink Diagnostics</Text>
-        <TouchableOpacity 
-          accessibilityLabel="Close diagnostics" 
-          style={styles.closeBtn} 
-          onPress={() => setVisible(false)}
-        >
-          <MaterialCommunityIcons name="close" size={14} color="#64748B" />
-        </TouchableOpacity>
+    <DraggableFloatingControl initialPosition={{ x: 12, y: 152 }} style={styles.floatingRoot}>
+      <View style={styles.container}>
+        <BlurView pointerEvents="none" tint="extraLight" intensity={72} experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined} style={StyleSheet.absoluteFill} />
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>MAVLink Diagnostics</Text>
+          <TouchableOpacity
+            accessibilityLabel="Close diagnostics"
+            style={styles.closeBtn}
+            onPress={() => setVisible(false)}
+          >
+            <MaterialCommunityIcons name="close" size={14} color="#64748B" />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.row}><Text style={styles.label}>Transport:</Text><Text style={styles.val}>{connectionStatus}</Text></View>
+        <View style={styles.row}><Text style={styles.label}>Vehicle:</Text><Text style={styles.val}>{mavlinkState}</Text></View>
+        <View style={styles.row}><Text style={styles.label}>Traffic:</Text><Text style={styles.val}>{pps} pps | {(bytesRx / 1024).toFixed(1)} KB</Text></View>
+        <View style={styles.row}><Text style={styles.label}>Event Loop Lag:</Text><Text style={[styles.val, lagMs > 100 && styles.warn]}>{lagMs} ms</Text></View>
+        <View style={styles.row}><Text style={styles.label}>Parser CRC Err:</Text><Text style={styles.val}>{diag.parser.crcErrors}</Text></View>
+        <View style={styles.row}><Text style={styles.label}>Link:</Text><Text style={styles.val}>{diag.transport ? `${diag.transport.kind} ${diag.transport.status}` : '--'}</Text></View>
+        <View style={styles.row}><Text style={styles.label}>Reconnects:</Text><Text style={styles.val}>{diag.reconnectCount}</Text></View>
+        <View style={styles.row}><Text style={styles.label}>Signatures:</Text><Text style={styles.val}>{diag.parser.signaturesValid} valid / {diag.parser.signaturesInvalid} invalid</Text></View>
+        <View style={styles.row}><Text style={styles.label}>Unsigned/Replay:</Text><Text style={styles.val}>{diag.parser.unsignedFramesRejected} / {diag.parser.signatureReplaysRejected}</Text></View>
+        <View style={styles.row}><Text style={styles.label}>Unsupported:</Text><Text style={styles.val}>{diag.parser.unsupportedFrames}</Text></View>
+        <View style={styles.row}><Text style={styles.label}>Discarded:</Text><Text style={styles.val}>{diag.parser.discardedBytes} B</Text></View>
       </View>
-      
-      <View style={styles.row}><Text style={styles.label}>Transport:</Text><Text style={styles.val}>{connectionStatus}</Text></View>
-      <View style={styles.row}><Text style={styles.label}>Vehicle:</Text><Text style={styles.val}>{mavlinkState}</Text></View>
-      <View style={styles.row}><Text style={styles.label}>Traffic:</Text><Text style={styles.val}>{pps} pps | {(bytesRx / 1024).toFixed(1)} KB</Text></View>
-      <View style={styles.row}><Text style={styles.label}>Event Loop Lag:</Text><Text style={[styles.val, lagMs > 100 && styles.warn]}>{lagMs} ms</Text></View>
-      <View style={styles.row}><Text style={styles.label}>Parser CRC Err:</Text><Text style={styles.val}>{diag.parser.crcErrors}</Text></View>
-      <View style={styles.row}><Text style={styles.label}>Link:</Text><Text style={styles.val}>{diag.transport ? `${diag.transport.kind} ${diag.transport.status}` : '--'}</Text></View>
-      <View style={styles.row}><Text style={styles.label}>Reconnects:</Text><Text style={styles.val}>{diag.reconnectCount}</Text></View>
-      <View style={styles.row}><Text style={styles.label}>Signatures:</Text><Text style={styles.val}>{diag.parser.signaturesValid} valid / {diag.parser.signaturesInvalid} invalid</Text></View>
-      <View style={styles.row}><Text style={styles.label}>Unsigned/Replay:</Text><Text style={styles.val}>{diag.parser.unsignedFramesRejected} / {diag.parser.signatureReplaysRejected}</Text></View>
-      <View style={styles.row}><Text style={styles.label}>Unsupported:</Text><Text style={styles.val}>{diag.parser.unsupportedFrames}</Text></View>
-      <View style={styles.row}><Text style={styles.label}>Discarded:</Text><Text style={styles.val}>{diag.parser.discardedBytes} B</Text></View>
-    </View>
+    </DraggableFloatingControl>
   );
 }
 
 const styles = StyleSheet.create({
+  floatingRoot: {
+    zIndex: layers.panel,
+    elevation: layers.panel,
+  },
   miniBtn: {
-    position: 'absolute',
-    top: 152,
-    left: 32,
     padding: 7,
     backgroundColor: 'rgba(255, 255, 255, 0.45)',
     borderWidth: 1.5,
     borderColor: 'rgba(255, 255, 255, 0.85)',
     borderRadius: 999,
     overflow: 'hidden',
-    zIndex: layers.panel,
     ...glassShadow,
   },
   container: {
-    position: 'absolute',
-    top: 152,
-    left: 12,
     width: 215,
     backgroundColor: 'rgba(255, 255, 255, 0.35)',
     borderColor: 'rgba(255, 255, 255, 0.80)',

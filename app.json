@@ -4,7 +4,7 @@
     "slug": "anitech-gcs",
     "version": "1.0.0",
     "orientation": "landscape",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
@@ -13,19 +13,21 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSLocalNetworkUsageDescription": "ANITECH GCS connects to your vehicle and Raspberry Pi gateway on the local network.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true,
+          "NSAllowsArbitraryLoadsInWebContent": true,
+          "NSAllowsArbitraryLoadsForMedia": true
+        },
         "NSLocationWhenInUseUsageDescription": "ANITECH GCS uses your location to center the map when no vehicle GPS is available.",
         "NSMicrophoneUsageDescription": "ANITECH GCS requires microphone access for pilot voice assistance.",
-        "NSSpeechRecognitionUsageDescription": "ANITECH GCS uses speech recognition to analyze flight inquiries and status queries.",
-        "NSBonjourServices": [
-          "_mavlink._udp",
-          "_http._tcp"
-        ]
+        "NSSpeechRecognitionUsageDescription": "ANITECH GCS uses speech recognition to analyze flight inquiries and status queries."
       }
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
+        "foregroundImage": "./assets/logo.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
@@ -46,7 +48,14 @@
     "plugins": [
       "expo-video",
       "react-native-vlc-media-player",
-      "expo-splash-screen",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/logo.png",
+          "imageWidth": 100,
+          "backgroundColor": "#FFFFFF"
+        }
+      ],
       [
         "expo-location",
         {

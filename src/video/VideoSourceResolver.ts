@@ -2,6 +2,7 @@ import type { WebRtcVideoConfig } from './VideoTypes';
 
 const SAFE_HOST = /^(?:\[[0-9a-fA-F:]+\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)$/;
 const SAFE_PATH = /^[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*$/;
+type VideoValidationOptions = { platform?: string };
 
 export class VideoConfigError extends Error {
   constructor(message: string) {
@@ -14,7 +15,8 @@ export function normalizeStreamPath(value: string): string {
   return value.trim().replace(/^\/+|\/+$/g, '');
 }
 
-export function validateWebRtcConfig(config: WebRtcVideoConfig): void {
+export function validateWebRtcConfig(config: WebRtcVideoConfig, options: VideoValidationOptions = {}): void {
+  void options;
   const host = config.host.trim();
   const streamPath = normalizeStreamPath(config.streamPath);
   if (!host) throw new VideoConfigError('MediaMTX host is required.');
@@ -29,8 +31,8 @@ export function validateWebRtcConfig(config: WebRtcVideoConfig): void {
   }
 }
 
-export function buildMediaMtxWebRtcUrl(config: WebRtcVideoConfig): string {
-  validateWebRtcConfig(config);
+export function buildMediaMtxWebRtcUrl(config: WebRtcVideoConfig, options: VideoValidationOptions = {}): string {
+  validateWebRtcConfig(config, options);
   const host = config.host.trim();
   const streamPath = normalizeStreamPath(config.streamPath);
   const query = [
@@ -43,8 +45,8 @@ export function buildMediaMtxWebRtcUrl(config: WebRtcVideoConfig): string {
   return `${config.scheme}://${host}:${config.port}/${streamPath}?${query}`;
 }
 
-export function buildMediaMtxBrowserUrl(config: WebRtcVideoConfig): string {
-  validateWebRtcConfig(config);
+export function buildMediaMtxBrowserUrl(config: WebRtcVideoConfig, options: VideoValidationOptions = {}): string {
+  validateWebRtcConfig(config, options);
   return `${config.scheme}://${config.host.trim()}:${config.port}/${normalizeStreamPath(config.streamPath)}`;
 }
 

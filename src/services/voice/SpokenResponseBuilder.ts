@@ -66,7 +66,7 @@ export function buildSpokenResponse(
   if (structuredCard) {
     switch (structuredCard.type) {
       case 'FLIGHT_STATUS': {
-        const mode = structuredCard.metrics?.find(m => m.label === 'MODE')?.value || 'LOITER';
+        const mode = structuredCard.metrics?.find(m => m.label === 'MODE' || m.label === 'Mode')?.value || 'UNKNOWN';
         const armed = structuredCard.metrics?.find(m => m.label === 'ARMED')?.value === 'YES';
         const batt = structuredCard.metrics?.find(m => m.label === 'BATTERY')?.value || '--';
         const gps = structuredCard.metrics?.find(m => m.label === 'GPS')?.value || '--';
@@ -119,7 +119,13 @@ export function buildSpokenResponse(
         };
       }
 
-      case 'PREFLIGHT_CHECK': {
+      case 'PREFLIGHT_CHECK':
+      case 'SYSTEM_HEALTH':
+      case 'CONNECTION_DIAG':
+      case 'MAVLINK_DIAG':
+      case 'ARM_DIAG':
+      case 'PARAMETER_CHANGE':
+      case 'FLIGHT_DEBRIEF': {
         const hasWarning = (structuredCard.warnings && structuredCard.warnings.length > 0);
         const tone: SpeechTone = hasWarning ? 'CAUTION' : 'POSITIVE';
         const summary = structuredCard.summary || (hasWarning

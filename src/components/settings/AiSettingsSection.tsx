@@ -331,6 +331,107 @@ export function AiSettingsSection() {
           />
         </View>
 
+        <View style={styles.fieldRow}>
+          <Text style={styles.fieldLabel}>Voice Provider</Text>
+          <View style={styles.segmentedRow}>
+            <TouchableOpacity
+              style={[
+                styles.segmentBtn,
+                (settings.voiceProvider || 'SYSTEM_TTS') === 'SYSTEM_TTS' && styles.segmentBtnSelected,
+              ]}
+              onPress={() => dispatch(updateAiSettings({ voiceProvider: 'SYSTEM_TTS' }))}
+            >
+              <Text
+                style={[
+                  styles.segmentBtnText,
+                  (settings.voiceProvider || 'SYSTEM_TTS') === 'SYSTEM_TTS' && styles.segmentBtnTextSelected,
+                ]}
+              >
+                System TTS
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.segmentBtn,
+                settings.voiceProvider === 'ELEVENLABS' && styles.segmentBtnSelected,
+              ]}
+              onPress={() => dispatch(updateAiSettings({ voiceProvider: 'ELEVENLABS' }))}
+            >
+              <Text
+                style={[
+                  styles.segmentBtnText,
+                  settings.voiceProvider === 'ELEVENLABS' && styles.segmentBtnTextSelected,
+                ]}
+              >
+                ElevenLabs
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.fieldSubHint}>
+            Neural voice requires a runtime secret/proxy configuration; API keys are not stored in Redux.
+          </Text>
+        </View>
+
+        {settings.voiceProvider === 'ELEVENLABS' ? (
+          <>
+            <View style={styles.inputGrid}>
+              <View style={[styles.fieldCol, { flex: 1 }]}>
+                <Text style={styles.fieldLabel}>ElevenLabs Voice ID</Text>
+                <TextInput
+                  style={styles.input}
+                  value={settings.elevenLabsVoiceId || ''}
+                  placeholder="voice_id"
+                  placeholderTextColor="#94A3B8"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={elevenLabsVoiceId => dispatch(updateAiSettings({ elevenLabsVoiceId: elevenLabsVoiceId.trim() || null }))}
+                />
+              </View>
+              <View style={[styles.fieldCol, { flex: 1 }]}>
+                <Text style={styles.fieldLabel}>Neural Timeout (sec)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={String(Math.round((settings.neuralVoiceTimeoutMs || 8000) / 1000))}
+                  placeholder="8"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="number-pad"
+                  onChangeText={val => {
+                    const sec = parseInt(val, 10);
+                    if (!isNaN(sec) && sec > 0) dispatch(updateAiSettings({ neuralVoiceTimeoutMs: sec * 1000 }));
+                  }}
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputGrid}>
+              <View style={[styles.fieldCol, { flex: 1 }]}>
+                <Text style={styles.fieldLabel}>ElevenLabs Model</Text>
+                <TextInput
+                  style={styles.input}
+                  value={settings.elevenLabsModelId || 'eleven_multilingual_v2'}
+                  placeholder="eleven_multilingual_v2"
+                  placeholderTextColor="#94A3B8"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={elevenLabsModelId => dispatch(updateAiSettings({ elevenLabsModelId: elevenLabsModelId.trim() || 'eleven_multilingual_v2' }))}
+                />
+              </View>
+              <View style={[styles.fieldCol, { flex: 1 }]}>
+                <Text style={styles.fieldLabel}>Proxy Base URL</Text>
+                <TextInput
+                  style={styles.input}
+                  value={settings.neuralVoiceProxyUrl || ''}
+                  placeholder="https://tts-proxy.example/v1"
+                  placeholderTextColor="#94A3B8"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={neuralVoiceProxyUrl => dispatch(updateAiSettings({ neuralVoiceProxyUrl: neuralVoiceProxyUrl.trim() || null }))}
+                />
+              </View>
+            </View>
+          </>
+        ) : null}
+
         {/* Speech Language Selector */}
         <View style={styles.fieldRow}>
           <Text style={styles.fieldLabel}>Recognition & Speech Language</Text>

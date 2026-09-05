@@ -3,6 +3,7 @@ export type AiProviderType = 'OLLAMA';
 export type AiConnectionStatus = 'OFFLINE' | 'CONNECTING' | 'READY' | 'ERROR';
 
 export type AiExecutionType = 'LOCAL' | 'CLOUD';
+export type AiVoiceProviderType = 'SYSTEM_TTS' | 'ELEVENLABS';
 
 export interface AiModelMetadata {
   id: string;
@@ -31,6 +32,12 @@ export interface AiSettings {
   voiceIdentifier: string | null;
   voiceGender?: 'DEFAULT' | 'MALE' | 'FEMALE';
   voiceStyle?: 'NATURAL' | 'COPILOT' | 'CALM';
+  voiceProvider?: AiVoiceProviderType;
+  elevenLabsVoiceId?: string | null;
+  elevenLabsModelId?: string;
+  neuralVoiceLanguage?: 'vi-VN' | 'en-US';
+  neuralVoiceTimeoutMs?: number;
+  neuralVoiceProxyUrl?: string | null;
 }
 
 export interface AiDiagnosticsState {

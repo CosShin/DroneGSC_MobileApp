@@ -8,6 +8,7 @@ import {
 import { MavlinkTransport, TransportDiagnostics, TransportEndpoint, TransportRemoteInfo } from './MavlinkTransport';
 import { getArduCopterModeName } from './ArduPilotModes';
 import { MavlinkSigningSession } from './MavlinkSigning';
+import { createDevDiagnostics } from '../../utils/devDiagnostics';
 
 export interface MavlinkCommandAck {
   command: number;
@@ -118,6 +119,7 @@ interface BatterySample {
 
 const PRIMARY_AUTOPILOT_COMPONENT_ID = 1;
 const BATTERY_SOURCE_FRESH_MS = 3_000;
+const devLog = createDevDiagnostics('MAVLINK', { minIntervalMs: 1000, maxPerKey: 120 });
 
 export class MavlinkManager {
   private parser = new MavlinkParser();
@@ -164,9 +166,11 @@ export class MavlinkManager {
     this.disconnect();
     this.sessionId++;
     this.transport = transport;
+    devLog('connect-session', { sessionId: this.sessionId, transport: transport.kind });
     this.removeDataListener = transport.onData((data, remote) => this.handleDatagram(data, remote));
     this.removeErrorListener = transport.onError(error => {
       console.warn('[MAVLink transport]', error.message);
+      devLog('transport-error', { sessionId: this.sessionId, error: error.message });
       this.errorListeners.forEach(listener => listener(error));
     });
     await transport.connect(endpoint);
@@ -198,11 +202,29 @@ export class MavlinkManager {
         const pitch = this.state.pitch === null ? '--' : this.state.pitch.toFixed(1);
         console.log(`[MAVLink] RX ${this.state.packetsPerSec}pps heartbeatAge=${heartbeatAge} attitudeAge=${attitudeAge} roll=${roll} pitch=${pitch}`);
       }
+      devLog('traffic', {
+        sessionId: this.sessionId,
+        rxPps: this.state.rxPacketsPerSec,
+        txPps: this.state.txPacketsPerSec,
+        packetsRx: this.state.packetsRx,
+        packetsTx: this.state.packetsTx,
+        heartbeatAgeMs: this.state.lastHeartbeatAt === null ? null : Date.now() - this.state.lastHeartbeatAt,
+        systemId: this.state.systemId,
+        componentId: this.state.componentId,
+        parser: this.parser.getDiagnostics(),
+      });
       this.emit();
     }, 1000);
   }
 
   disconnect() {
+    devLog('disconnect-session', {
+      sessionId: this.sessionId,
+      transport: this.transport?.kind ?? null,
+      stateListeners: this.stateListeners.size,
+      heartbeatListeners: this.heartbeatListeners.size,
+      packetListeners: this.packetListeners.size,
+    });
     if (this.gcsHeartbeatTimer) clearInterval(this.gcsHeartbeatTimer);
     this.gcsHeartbeatTimer = null;
     this.transport?.disconnect();
@@ -257,18 +279,20 @@ export class MavlinkManager {
     };
   }
   getVehicles() { return this.vehicleSnapshot(); }
-  onState(listener: (state: MavlinkVehicleState) => void) { this.stateListeners.add(listener); return () => this.stateListeners.delete(listener); }
-  onHeartbeat(listener: (timestamp: number) => void) { this.heartbeatListeners.add(listener); return () => this.heartbeatListeners.delete(listener); }
-  onCommandAck(listener: (ack: MavlinkCommandAck) => void) { this.ackListeners.add(listener); return () => this.ackListeners.delete(listener); }
-  onStatusText(listener: (message: MavlinkStatusText) => void) { this.statusTextListeners.add(listener); return () => this.statusTextListeners.delete(listener); }
-  onMissionFrame(listener: (frame: MavlinkFrame) => void) { this.missionFrameListeners.add(listener); return () => this.missionFrameListeners.delete(listener); }
-  onError(listener: (error: Error) => void) { this.errorListeners.add(listener); return () => this.errorListeners.delete(listener); }
-  onVehiclesChanged(listener: (vehicles: DetectedMavlinkVehicle[]) => void) { this.vehicleListeners.add(listener); return () => this.vehicleListeners.delete(listener); }
+  onState(listener: (state: MavlinkVehicleState) => void) { this.stateListeners.add(listener); devLog('listener-state-add', { count: this.stateListeners.size }); return () => { this.stateListeners.delete(listener); devLog('listener-state-remove', { count: this.stateListeners.size }); }; }
+  onHeartbeat(listener: (timestamp: number) => void) { this.heartbeatListeners.add(listener); devLog('listener-heartbeat-add', { count: this.heartbeatListeners.size }); return () => { this.heartbeatListeners.delete(listener); devLog('listener-heartbeat-remove', { count: this.heartbeatListeners.size }); }; }
+  onCommandAck(listener: (ack: MavlinkCommandAck) => void) { this.ackListeners.add(listener); devLog('listener-ack-add', { count: this.ackListeners.size }); return () => { this.ackListeners.delete(listener); devLog('listener-ack-remove', { count: this.ackListeners.size }); }; }
+  onStatusText(listener: (message: MavlinkStatusText) => void) { this.statusTextListeners.add(listener); devLog('listener-statustext-add', { count: this.statusTextListeners.size }); return () => { this.statusTextListeners.delete(listener); devLog('listener-statustext-remove', { count: this.statusTextListeners.size }); }; }
+  onMissionFrame(listener: (frame: MavlinkFrame) => void) { this.missionFrameListeners.add(listener); devLog('listener-mission-add', { count: this.missionFrameListeners.size }); return () => { this.missionFrameListeners.delete(listener); devLog('listener-mission-remove', { count: this.missionFrameListeners.size }); }; }
+  onError(listener: (error: Error) => void) { this.errorListeners.add(listener); devLog('listener-error-add', { count: this.errorListeners.size }); return () => { this.errorListeners.delete(listener); devLog('listener-error-remove', { count: this.errorListeners.size }); }; }
+  onVehiclesChanged(listener: (vehicles: DetectedMavlinkVehicle[]) => void) { this.vehicleListeners.add(listener); devLog('listener-vehicles-add', { count: this.vehicleListeners.size }); return () => { this.vehicleListeners.delete(listener); devLog('listener-vehicles-remove', { count: this.vehicleListeners.size }); }; }
   onPacket(listener: (event: MavlinkPacketEvent) => void) {
     this.packetListeners.add(listener);
+    devLog('listener-packet-add', { count: this.packetListeners.size });
     this.parser.setRawCaptureEnabled(true);
     return () => {
       this.packetListeners.delete(listener);
+      devLog('listener-packet-remove', { count: this.packetListeners.size });
       this.parser.setRawCaptureEnabled(this.packetListeners.size > 0);
     };
   }
@@ -352,6 +376,15 @@ export class MavlinkManager {
     view.setInt16(6, input.validAxes.yaw ? Math.round(this.clamp(input.yaw, -1, 1) * 1000) : invalid, true);
     view.setUint16(8, 0, true);
     payload[10] = this.state.systemId;
+    devLog('manual-control', {
+      sessionId: this.sessionId,
+      targetSystemId: this.state.systemId,
+      roll: input.roll,
+      pitch: input.pitch,
+      yaw: input.yaw,
+      throttle: input.throttle,
+      validAxes: input.validAxes,
+    });
     await this.sendFrame(69, payload);
   }
 
@@ -424,6 +457,13 @@ export class MavlinkManager {
     const frames = this.transport?.kind === 'UDP'
       ? this.parser.pushDatagram(data)
       : this.parser.push(data);
+    devLog('rx-datagram', {
+      sessionId: this.sessionId,
+      bytes: data.length,
+      frames: frames.length,
+      remote,
+      parser: this.parser.getDiagnostics(),
+    });
     if (this.parser.getDiagnostics().unsupportedFrames > unsupportedBefore) {
       // Unknown dialect frames consume sequence numbers too. Reset the loss
       // baseline so a received-but-unsupported frame is not counted as lost.
@@ -481,6 +521,16 @@ export class MavlinkManager {
       this.state.systemStatus = frame.payload[7];
       this.state.lastHeartbeatAt = now;
       this.heartbeatListeners.forEach(listener => listener(now));
+      devLog('heartbeat', {
+        sessionId: this.sessionId,
+        systemId: frame.systemId,
+        componentId: frame.componentId,
+        mavType: frame.payload[4],
+        autopilotType: frame.payload[5],
+        mode: this.state.mode,
+        armed: this.state.armed,
+        heartbeatListeners: this.heartbeatListeners.size,
+      });
       if (!this.intervalsRequested) {
         this.intervalsRequested = true;
         this.requestMessageIntervals();

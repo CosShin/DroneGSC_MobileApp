@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { CommandButton, EmptyStateCard, Panel, SectionTitle, StatusChip, TelemetryCard } from '../../components/gcs/Primitives';
@@ -38,6 +38,7 @@ import { MavlinkInspector } from '../../components/vehicle/MavlinkInspector';
 
 type Tab = 'OVERVIEW' | 'SENSORS' | 'MAVLINK' | 'PRECISION LANDING' | 'MESSAGES';
 const tabs: Tab[] = ['OVERVIEW', 'SENSORS', 'MAVLINK', 'PRECISION LANDING', 'MESSAGES'];
+const VEHICLE_DRONE_IMAGE = require('../../../assets/vehicle-drone.png');
 
 export function VehicleScreen() {
   useScreenOrientation();
@@ -170,7 +171,11 @@ export function VehicleScreen() {
                       </View>
                       <View style={styles.vehicleVisual}>
                         <View style={styles.vehicleHalo}>
-                          <MaterialCommunityIcons name="quadcopter" size={54} color="#2F80ED" />
+                          <Image
+                            source={VEHICLE_DRONE_IMAGE}
+                            style={styles.vehicleImage}
+                            resizeMode="contain"
+                          />
                         </View>
                         <Text numberOfLines={1} style={styles.vehicleName}>{vehicle}</Text>
                         <Text style={styles.vehicleType}>Connected vehicle</Text>
@@ -492,10 +497,13 @@ const styles = StyleSheet.create({
   vehicleHalo: {
     width: 86,
     height: 68,
-    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(47, 128, 237, 0.12)',
+  },
+  vehicleImage: {
+    width: 86,
+    height: 68,
+    borderRadius: 18,
   },
   vehicleName: {
     color: '#1E2A3A',

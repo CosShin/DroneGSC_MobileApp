@@ -23,6 +23,7 @@ import type { MavlinkSigningPolicy } from '../mavlink/MavlinkSigning';
 import { MavlinkSigningSession } from '../mavlink/MavlinkSigning';
 import { loadMavlinkSigningKey } from '../mavlink/MavlinkSigningKeyStore';
 import { precisionLandingAdvisor } from '../vision/PrecisionLandingAdvisor';
+import { createDevDiagnostics } from '../../utils/devDiagnostics';
 
 export type UniversalConnectionStatus = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
 export type NetworkState = 'DISCONNECTED' | 'BOUND' | 'ERROR';
@@ -56,6 +57,7 @@ export interface UniversalTelemetryData {
 
 type TelemetryListener = (data: UniversalTelemetryData) => void;
 type StatusListener = (status: UniversalConnectionStatus) => void;
+const devLog = createDevDiagnostics('CONNECTION', { minIntervalMs: 500, maxPerKey: 160 });
 
 const emptyTelemetry = (): UniversalTelemetryData => ({
   latitude: null, longitude: null, altitude: null, altitudeMsl: null, relativeAltitude: null,
@@ -184,6 +186,7 @@ export class UniversalConnectionService {
 
 
   async connect(config?: Partial<ConnectionConfig>) {
+    devLog('connect-called', { type: config?.type ?? DEFAULT_CONNECTION_CONFIG.type, currentStatus: this.status });
     this.intentionalDisconnect = false;
     this.activeConfig = {
       ...DEFAULT_CONNECTION_CONFIG,
@@ -203,6 +206,7 @@ export class UniversalConnectionService {
 
   private async openConnection(config: ConnectionConfig, reconnecting: boolean) {
     const attempt = ++this.connectAttempt;
+    devLog('open-connection', { attempt, reconnecting, type: config.type, reconnectCount: this.reconnectCount });
     this.teardownRuntime();
     this.reconnectEnabled = false;
     const type: ConnectionType = config?.type ?? 'WEBSOCKET';
@@ -285,6 +289,7 @@ export class UniversalConnectionService {
       this.manager.onStatusText(message => this.statusTextListeners.forEach(listener => listener(message))),
       this.manager.onError(error => this.fail(`${type}_TRANSPORT_ERROR: ${error.message}`)),
     ];
+    devLog('runtime-listeners-registered', { attempt, removers: this.removers.length, type });
 
     try {
       await this.withTimeout(this.manager.connect(transport, endpoint), this.connectionTimeoutMs, `${type}_OPEN_TIMEOUT`);
@@ -304,6 +309,7 @@ export class UniversalConnectionService {
       this.lastWatchdogTime = this.now();
       this.watchdog = setInterval(() => this.checkHeartbeat(), 250);
       this.logger.write({ level: 'INFO', category: 'TRANSPORT', code: 'TRANSPORT_READY', message: `${type} ready; waiting for HEARTBEAT` });
+      devLog('transport-ready', { attempt, type, watchdog: Boolean(this.watchdog), reconnectEnabled: this.reconnectEnabled });
     } catch (error) {
       if (attempt !== this.connectAttempt || this.intentionalDisconnect) return;
       this.manager.disconnect();
@@ -312,6 +318,7 @@ export class UniversalConnectionService {
   }
 
   disconnect() {
+    devLog('disconnect-called', { status: this.status, reconnectCount: this.reconnectCount });
     this.intentionalDisconnect = true;
     this.activeConfig = null;
     this.connectAttempt++;
@@ -320,6 +327,13 @@ export class UniversalConnectionService {
   }
 
   private teardownRuntime() {
+    devLog('teardown-runtime', {
+      watchdog: Boolean(this.watchdog),
+      removers: this.removers.length,
+      reconnectTimer: Boolean(this.reconnectTimer),
+      status: this.status,
+      phase: this.phaseMachine.getSnapshot().phase,
+    });
     if (this.watchdog) clearInterval(this.watchdog);
     this.watchdog = null;
     this.removers.forEach(remove => remove());
@@ -408,6 +422,12 @@ export class UniversalConnectionService {
     }
     this.setLink({ network: 'BOUND', mavlink: 'ACTIVE', vehicle: 'CONNECTED', error: null });
     this.setStatus('CONNECTED');
+    devLog('heartbeat-ok', {
+      heartbeatAgeMs: Date.now() - timestamp,
+      phase: this.phaseMachine.getSnapshot().phase,
+      reconnectCount: this.reconnectCount,
+      link: this.linkState,
+    });
     this.heartbeatListeners.forEach(listener => listener(timestamp));
   }
 
@@ -487,6 +507,7 @@ export class UniversalConnectionService {
 
     if (!this.lastHeartbeatAt || current - this.lastHeartbeatAt <= this.heartbeatTimeoutMs) return;
     if (this.linkState.mavlink === 'HEARTBEAT_LOST') return;
+    devLog('heartbeat-lost', { ageMs: current - this.lastHeartbeatAt, timeoutMs: this.heartbeatTimeoutMs, phase: this.phaseMachine.getSnapshot().phase });
     if (this.phaseMachine.getSnapshot().phase === 'LINK_ACTIVE') this.transition('DEGRADED', 'Heartbeat timeout');
     this.logger.write({ level: 'WARN', category: 'MAVLINK', code: 'HEARTBEAT_LOST', message: 'Vehicle heartbeat timed out' });
     this.state.stale = true;
@@ -496,6 +517,7 @@ export class UniversalConnectionService {
   }
 
   private fail(error: string) {
+    devLog('fail', { error, phase: this.phaseMachine.getSnapshot().phase, reconnectEnabled: this.reconnectEnabled });
     const phase = this.phaseMachine.getSnapshot().phase;
     if (phase !== 'ERROR' && phase !== 'CLOSING') this.transition('ERROR', error);
     this.logger.write({ level: 'ERROR', category: 'TRANSPORT', code: 'CONNECTION_FAILED', message: error });
@@ -513,16 +535,19 @@ export class UniversalConnectionService {
     this.setStatus('CONNECTING');
     const config = this.activeConfig;
     const delayMs = Math.min(this.reconnectDelayMs * (2 ** this.reconnectAttemptStreak), 30_000);
+    devLog('schedule-reconnect', { reason, delayMs, reconnectAttemptStreak: this.reconnectAttemptStreak, reconnectCount: this.reconnectCount });
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.intentionalDisconnect || this.activeConfig !== config) return;
       this.reconnectCount++;
       this.reconnectAttemptStreak++;
+      devLog('reconnect-fired', { reconnectCount: this.reconnectCount, reconnectAttemptStreak: this.reconnectAttemptStreak });
       this.openConnection(config, true);
     }, delayMs);
   }
 
   private clearReconnectTimer() {
+    if (this.reconnectTimer) devLog('clear-reconnect-timer', { reconnectCount: this.reconnectCount });
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
   }
@@ -539,15 +564,18 @@ export class UniversalConnectionService {
   private emitTelemetry() { this.telemetryListeners.forEach(listener => listener({ ...this.state })); }
   private setStatus(status: UniversalConnectionStatus) {
     if (this.status === status) return;
+    devLog('status', { previous: this.status, next: status });
     this.status = status;
     this.statusListeners.forEach(listener => listener(status));
   }
   private setLink(state: Omit<UniversalLinkState, 'phase'>) {
     this.linkState = { ...state, phase: this.phaseMachine.getSnapshot().phase };
+    devLog('link', { ...this.linkState });
     this.linkListeners.forEach(listener => listener({ ...this.linkState }));
   }
   private transition(phase: ConnectionPhase, reason: string) {
     const snapshot = this.phaseMachine.transition(phase, reason);
+    devLog('phase', { previous: snapshot.previous, next: snapshot.phase, reason });
     this.linkState.phase = snapshot.phase;
     this.logger.write({
       level: phase === 'ERROR' || phase === 'DEGRADED' ? 'WARN' : 'INFO',

@@ -250,14 +250,22 @@ function Connection() {
   const isWebSocket = config.type === 'WEBSOCKET';
   const isUsb = config.type === 'USB_SERIAL';
 
-  const transports: Array<{ type: ConnectionType; label: string; available: boolean; reason: string | null }> = [
-    { type: 'WEBSOCKET', label: 'PI GATEWAY', available: true, reason: null },
-    { type: 'UDP', label: 'UDP', available: platformCapabilities.udp.support === 'SUPPORTED', reason: platformCapabilities.udp.reason },
-    { type: 'TCP', label: 'TCP', available: platformCapabilities.tcp.support === 'SUPPORTED', reason: platformCapabilities.tcp.reason },
-    { type: 'USB_SERIAL', label: 'USB', available: platformCapabilities.usbSerial.support === 'SUPPORTED', reason: platformCapabilities.usbSerial.reason },
+  const transports: Array<{ type: ConnectionType; label: string; available: boolean; reason: string | null; visible: boolean }> = [
+    { type: 'WEBSOCKET', label: 'PI GATEWAY', available: true, reason: null, visible: platformCapabilities.webSocket.visible },
+    { type: 'UDP', label: 'UDP', available: platformCapabilities.udp.support === 'SUPPORTED', reason: platformCapabilities.udp.reason, visible: platformCapabilities.udp.visible },
+    { type: 'TCP', label: 'TCP', available: platformCapabilities.tcp.support === 'SUPPORTED', reason: platformCapabilities.tcp.reason, visible: platformCapabilities.tcp.visible },
+    { type: 'USB_SERIAL', label: 'USB', available: platformCapabilities.usbSerial.support === 'SUPPORTED', reason: platformCapabilities.usbSerial.reason, visible: platformCapabilities.usbSerial.visible },
   ];
+  const visibleTransports = transports.filter(item => item.visible);
+  const selectedTransport = transports.find(item => item.type === config.type);
 
-  const networkProfiles: NetworkProfileType[] = ['LOCAL_WIFI', 'TELEMETRY_RADIO', 'USB_DIRECT', 'CELLULAR_VPN', 'CUSTOM', 'SITL'];
+  const networkProfiles: NetworkProfileType[] = [
+    'LOCAL_WIFI',
+    'CELLULAR_VPN',
+    'CUSTOM',
+    ...(platformCapabilities.udp.visible ? (['TELEMETRY_RADIO', 'SITL'] as NetworkProfileType[]) : []),
+    ...(platformCapabilities.usbSerial.visible ? (['USB_DIRECT'] as NetworkProfileType[]) : []),
+  ];
 
   const websocketProfiles = [
     { name: 'LOCAL PI', url: 'ws://192.168.1.247:8765/mavlink' },
@@ -272,6 +280,10 @@ function Connection() {
   ];
 
   const connect = async () => {
+    if (!selectedTransport?.available) {
+      Alert.alert('Transport unavailable', selectedTransport?.reason ?? 'This transport is not available on the current platform.');
+      return;
+    }
     if (status === 'CONNECTED' || status === 'CONNECTING') {
       universalConnectionService.disconnect();
       return;
@@ -358,7 +370,7 @@ function Connection() {
         <Row label="Security" value={`${config.websocket.url.trim().startsWith('wss://') ? 'WSS' : 'PLAIN LINK'} · VPN ${config.networkProfile === 'CELLULAR_VPN' ? 'SYSTEM' : 'OFF'} · SIGNING ${mavlinkConfig.signingPolicy}`} />
         <SectionTitle>Transport</SectionTitle>
         <View style={styles.pills}>
-          {transports.map(item => (
+          {visibleTransports.map(item => (
             <TouchableOpacity
               key={item.type}
               disabled={!item.available}
@@ -369,8 +381,10 @@ function Connection() {
             </TouchableOpacity>
           ))}
         </View>
-        {transports.find(item => item.type === config.type)?.reason ? (
-          <Note tone="danger">{transports.find(item => item.type === config.type)?.reason}</Note>
+        {selectedTransport && !selectedTransport.visible ? (
+          <Note tone="danger">{selectedTransport.reason ?? 'The saved transport is not available on this platform. Select Pi Gateway before connecting.'}</Note>
+        ) : selectedTransport?.reason ? (
+          <Note tone="danger">{selectedTransport.reason}</Note>
         ) : null}
 
         <SectionTitle>Network profile</SectionTitle>
@@ -388,11 +402,21 @@ function Connection() {
 
         <SectionTitle>Saved connections</SectionTitle>
         <View style={styles.pills}>
-          {savedProfiles.map(profile => (
-            <TouchableOpacity key={profile.id} style={styles.pill} onPress={() => dispatch(loadConnectionProfile(profile.id))} onLongPress={() => dispatch(removeConnectionProfile(profile.id))}>
+          {savedProfiles.map(profile => {
+            const profileTransport = transports.find(item => item.type === profile.config.type);
+            const profileAvailable = profileTransport?.visible && profileTransport.available;
+            return (
+            <TouchableOpacity
+              key={profile.id}
+              disabled={!profileAvailable}
+              style={[styles.pill, !profileAvailable && { opacity: 0.42 }]}
+              onPress={() => dispatch(loadConnectionProfile(profile.id))}
+              onLongPress={() => dispatch(removeConnectionProfile(profile.id))}
+            >
               <Text style={styles.pillText}>{profile.name}</Text>
             </TouchableOpacity>
-          ))}
+            );
+          })}
         </View>
         <Input label="PROFILE NAME" value={profileName} onChange={setProfileName} placeholder="MY DRONE - WIFI" />
         <TouchableOpacity style={styles.pill} onPress={saveProfile}><Text style={styles.pillText}>SAVE CURRENT PROFILE</Text></TouchableOpacity>
@@ -532,13 +556,23 @@ function Connection() {
             </View>
           </>
         ) : null}
-        <TouchableOpacity style={[styles.primary, status === 'CONNECTING' && styles.primaryWarning]} onPress={connect}>
+        <TouchableOpacity
+          disabled={!selectedTransport?.available && status !== 'CONNECTED' && status !== 'CONNECTING'}
+          style={[
+            styles.primary,
+            status === 'CONNECTING' && styles.primaryWarning,
+            !selectedTransport?.available && status !== 'CONNECTED' && status !== 'CONNECTING' && { opacity: 0.42 },
+          ]}
+          onPress={connect}
+        >
           <MaterialCommunityIcons name={status === 'CONNECTED' ? 'lan-disconnect' : status === 'CONNECTING' ? 'close' : 'lan-connect'} size={17} color="#FFF" />
           <Text style={styles.primaryText}>{button}</Text>
         </TouchableOpacity>
       </Panel>
       {error ? (
         <Note tone="danger">{friendlyError(error)}</Note>
+      ) : selectedTransport && !selectedTransport.visible ? (
+        <Note tone="danger">{selectedTransport.reason ?? 'This transport is hidden on the current platform because it has not been verified.'}</Note>
       ) : isUdp ? (
         <Note>Direct UDP requires a rebuilt Expo development client. For SITL, forward packets to the phone IP and the selected local port.</Note>
       ) : isTcp ? (

@@ -15,11 +15,15 @@ const ACTIONS: Array<{
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
   tone: string;
 }> = [
+  { type: 'WHATS_HAPPENING', label: "What's happening?", icon: 'radar', tone: '#2586EA' },
+  { type: 'SYSTEM_HEALTH', label: 'Health', icon: 'heart-pulse', tone: '#10B981' },
   { type: 'PREFLIGHT', label: 'Preflight', icon: 'clipboard-check-outline', tone: '#10B981' },
+  { type: 'CONNECTION_DOCTOR', label: 'Connection', icon: 'lan-connect', tone: '#0EA5E9' },
   { type: 'MAVLINK_CHECK', label: 'MAVLink', icon: 'pulse', tone: '#2586EA' },
   { type: 'ANALYZE_CAMERA', label: 'Camera', icon: 'camera-outline', tone: '#EC4899' },
   { type: 'MISSION_REVIEW', label: 'Mission', icon: 'map-marker-path', tone: '#8B5CF6' },
   { type: 'WHY_CANT_ARM', label: "Why can't I arm?", icon: 'shield-alert-outline', tone: '#F59E0B' },
+  { type: 'FLIGHT_DEBRIEF', label: 'Debrief', icon: 'clipboard-text-clock-outline', tone: '#64748B' },
   { type: 'CHECK_LANDING_MARKER', label: 'Landing Marker', icon: 'crosshairs-gps', tone: '#06B6D4' },
 ];
 

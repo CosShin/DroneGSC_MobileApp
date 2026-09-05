@@ -4,6 +4,7 @@ export const isExpoGo = platformCapabilities.expoGo;
 
 export const videoCapabilities = Object.freeze({
   webRtcWebView: platformCapabilities.webRtc.support === 'SUPPORTED',
-  nativeUdpH264: platformCapabilities.udp.support === 'SUPPORTED',
+  nativeUdpH264: platformCapabilities.udp.support === 'SUPPORTED'
+    && platformCapabilities.rtsp.support === 'SUPPORTED',
   nativeRtsp: platformCapabilities.rtsp.support === 'SUPPORTED',
 });

@@ -56,4 +56,10 @@ export const DEFAULT_AI_CONFIG: AiSettings = {
   voiceIdentifier: null,
   voiceGender: 'DEFAULT',
   voiceStyle: 'COPILOT',
+  voiceProvider: 'SYSTEM_TTS',
+  elevenLabsVoiceId: null,
+  elevenLabsModelId: 'eleven_multilingual_v2',
+  neuralVoiceLanguage: 'vi-VN',
+  neuralVoiceTimeoutMs: 8000,
+  neuralVoiceProxyUrl: null,
 };

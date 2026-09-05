@@ -18,6 +18,7 @@ import { getModelMetadata } from '../../settings/defaults/ai';
 import { aiService, type AiServiceState } from '../../services/ai/AiService';
 import { speechRecognitionService, type SpeechRecognitionState } from '../../services/voice/SpeechRecognitionService';
 import { aiSpeechService } from '../../services/voice/AiSpeechService';
+import type { VoiceProviderStatus } from '../../services/voice/SpeechProvider';
 import { AnimatedAiMascot } from './AnimatedAiMascot';
 import { AiQuickActions } from './AiQuickActions';
 import { AiMessageList } from './AiMessageList';
@@ -43,6 +44,7 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
   const [aiState, setAiState] = useState<AiServiceState>(aiService.getState());
   const [sttState, setSttState] = useState<SpeechRecognitionState>(speechRecognitionService.getState());
   const [isSpeaking, setIsSpeaking] = useState(aiSpeechService.isSpeaking);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceProviderStatus>(aiSpeechService.getProviderStatus());
   const [inputText, setInputText] = useState('');
   const [isMinimized, setIsMinimized] = useState(false);
 
@@ -51,7 +53,10 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
   useEffect(() => {
     const unsubAi = aiService.subscribe(setAiState);
     const unsubStt = speechRecognitionService.subscribe(setSttState);
-    const unsubTts = aiSpeechService.subscribe(setIsSpeaking);
+    const unsubTts = aiSpeechService.subscribe(speaking => {
+      setIsSpeaking(speaking);
+      setVoiceStatus(aiSpeechService.getProviderStatus());
+    });
 
     return () => {
       unsubAi();
@@ -70,6 +75,30 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
   }, [visible]);
 
   // Voice reply trigger when AI message arrives (decoupled spoken response)
+  useEffect(() => {
+    if ((aiSettings.voiceProvider || 'SYSTEM_TTS') === 'ELEVENLABS') {
+      aiSpeechService.configureNeuralVoice({
+        provider: 'ELEVENLABS',
+        voiceId: aiSettings.elevenLabsVoiceId,
+        modelId: aiSettings.elevenLabsModelId,
+        language: aiSettings.neuralVoiceLanguage || aiSettings.speechLanguage,
+        timeoutMs: aiSettings.neuralVoiceTimeoutMs,
+        endpointBaseUrl: aiSettings.neuralVoiceProxyUrl || undefined,
+      });
+    } else {
+      aiSpeechService.configureNeuralVoice(null);
+    }
+    setVoiceStatus(aiSpeechService.getProviderStatus());
+  }, [
+    aiSettings.voiceProvider,
+    aiSettings.elevenLabsVoiceId,
+    aiSettings.elevenLabsModelId,
+    aiSettings.neuralVoiceLanguage,
+    aiSettings.neuralVoiceTimeoutMs,
+    aiSettings.neuralVoiceProxyUrl,
+    aiSettings.speechLanguage,
+  ]);
+
   useEffect(() => {
     if (!aiSettings.voiceRepliesEnabled || !visible) return;
 
@@ -167,7 +196,12 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
   const status = aiState.diagnostics.status;
   const statusText = status === 'READY' ? 'Ready' : status === 'CONNECTING' ? 'Connecting' : status === 'ERROR' ? 'Error' : 'Offline';
   const latencyText = aiState.diagnostics.latencyMs != null ? `${(aiState.diagnostics.latencyMs / 1000).toFixed(1)}s` : '';
-  const headerSubtitle = `${modelLabel} · ${statusText}${latencyText ? ` · ${latencyText}` : ''}`;
+  const voiceText = voiceStatus.state === 'FALLBACK'
+    ? 'Voice System fallback'
+    : voiceStatus.provider === 'ELEVENLABS'
+      ? 'Voice Neural'
+      : 'Voice System';
+  const headerSubtitle = `${modelLabel} · ${statusText}${latencyText ? ` · ${latencyText}` : ''} · ${voiceText}`;
 
   // Landscape target: approximately 34–40% screen width
   const panelWidth = Math.max(340, Math.min(layout.contentWidth * 0.38, 410));

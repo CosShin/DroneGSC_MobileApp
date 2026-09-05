@@ -30,6 +30,11 @@ test('settingsSlice initializes with DEFAULT_AI_CONFIG including fallback and vo
   assert.equal(ai.speechRate, 1.0);
   assert.equal(ai.speechPitch, 1.0);
   assert.equal(ai.voiceIdentifier, null);
+  assert.equal(ai.voiceProvider, 'SYSTEM_TTS');
+  assert.equal(ai.elevenLabsVoiceId, null);
+  assert.equal(ai.elevenLabsModelId, 'eleven_multilingual_v2');
+  assert.equal(ai.neuralVoiceLanguage, 'vi-VN');
+  assert.equal(ai.neuralVoiceTimeoutMs, 8000);
 });
 
 test('SUPPORTED_AI_MODELS contains both Qwen Local and Gemma Cloud presets', () => {

@@ -1,10 +1,50 @@
 import type { SpeechVoice, TtsOptions } from './AiSpeechService';
 
+export type VoiceProviderName = 'SYSTEM_TTS' | 'ELEVENLABS';
+export type VoiceProviderState = 'READY' | 'UNCONFIGURED' | 'SPEAKING' | 'FALLBACK' | 'ERROR';
+
+export interface VoiceProviderStatus {
+  provider: VoiceProviderName;
+  state: VoiceProviderState;
+  lastError: string | null;
+  fallbackProvider?: VoiceProviderName;
+}
+
+export interface NeuralVoiceConfig {
+  provider: 'ELEVENLABS';
+  apiKey?: string | null;
+  voiceId?: string | null;
+  modelId?: string | null;
+  language?: string | null;
+  timeoutMs?: number;
+  endpointBaseUrl?: string;
+}
+
+type FetchLike = (input: string, init?: {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  signal?: AbortSignal;
+}) => Promise<{
+  ok: boolean;
+  status: number;
+  text(): Promise<string>;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}>;
+
+export type NeuralAudioPlayback = (audio: ArrayBuffer, metadata: {
+  provider: VoiceProviderName;
+  mimeType: string;
+  voiceId: string;
+}) => Promise<void>;
+
 export interface ISpeechProvider {
   speak(text: string, options: TtsOptions): Promise<void>;
   stop(): Promise<void>;
   isSpeaking(): boolean;
   getAvailableVoices(filterLang?: string): Promise<SpeechVoice[]>;
+  isAvailable?(): boolean;
+  getStatus?(): VoiceProviderStatus;
 }
 
 let nativeSpeechModuleCached: any = undefined;
@@ -84,6 +124,19 @@ export class SystemSpeechProvider implements ISpeechProvider {
     }
   }
 
+  isAvailable(): boolean {
+    const Speech = getNativeSpeechModule();
+    return !!Speech && typeof Speech.speak === 'function';
+  }
+
+  getStatus(): VoiceProviderStatus {
+    return {
+      provider: 'SYSTEM_TTS',
+      state: this._isSpeaking ? 'SPEAKING' : 'READY',
+      lastError: null,
+    };
+  }
+
   async speak(text: string, options: TtsOptions): Promise<void> {
     const Speech = getNativeSpeechModule();
     if (!Speech || typeof Speech.speak !== 'function') {
@@ -139,5 +192,208 @@ export class SystemSpeechProvider implements ISpeechProvider {
     } finally {
       this.setSpeaking(false);
     }
+  }
+}
+
+export class ElevenLabsVoiceProvider implements ISpeechProvider {
+  private config: Required<Pick<NeuralVoiceConfig, 'provider'>> & Omit<NeuralVoiceConfig, 'provider'>;
+  private fetchFn: FetchLike;
+  private playAudio?: NeuralAudioPlayback;
+  private abortController: AbortController | null = null;
+  private _isSpeaking = false;
+  private lastError: string | null = null;
+
+  constructor(
+    config: NeuralVoiceConfig,
+    deps: { fetch?: FetchLike; playAudio?: NeuralAudioPlayback } = {},
+  ) {
+    this.config = { ...config, provider: 'ELEVENLABS' };
+    this.fetchFn = deps.fetch ?? (globalThis.fetch as FetchLike);
+    this.playAudio = deps.playAudio;
+  }
+
+  configure(config: Partial<NeuralVoiceConfig>) {
+    this.config = { ...this.config, ...config, provider: 'ELEVENLABS' };
+  }
+
+  isSpeaking(): boolean {
+    return this._isSpeaking;
+  }
+
+  isAvailable(): boolean {
+    return (!!this.config.apiKey?.trim() || !!this.config.endpointBaseUrl?.trim())
+      && !!this.config.voiceId?.trim()
+      && typeof this.fetchFn === 'function'
+      && typeof this.playAudio === 'function';
+  }
+
+  getStatus(): VoiceProviderStatus {
+    return {
+      provider: 'ELEVENLABS',
+      state: this._isSpeaking ? 'SPEAKING' : this.isAvailable() ? 'READY' : this.lastError ? 'ERROR' : 'UNCONFIGURED',
+      lastError: this.lastError,
+    };
+  }
+
+  async getAvailableVoices(): Promise<SpeechVoice[]> {
+    return [];
+  }
+
+  async speak(text: string, options: TtsOptions): Promise<void> {
+    const apiKey = this.config.apiKey?.trim();
+    const voiceId = this.config.voiceId?.trim();
+    if ((!apiKey && !this.config.endpointBaseUrl?.trim()) || !voiceId) {
+      this.lastError = 'NEURAL_TTS_UNCONFIGURED';
+      throw new Error(this.lastError);
+    }
+    if (!this.playAudio) {
+      this.lastError = 'NEURAL_TTS_PLAYBACK_UNAVAILABLE';
+      throw new Error(this.lastError);
+    }
+    if (typeof this.fetchFn !== 'function') {
+      this.lastError = 'NEURAL_TTS_FETCH_UNAVAILABLE';
+      throw new Error(this.lastError);
+    }
+
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+    this.abortController = new AbortController();
+    this._isSpeaking = true;
+    this.lastError = null;
+
+    const timeoutMs = Math.max(1000, this.config.timeoutMs ?? 8000);
+    const timeout = setTimeout(() => this.abortController?.abort(), timeoutMs);
+    const endpointBaseUrl = (this.config.endpointBaseUrl || 'https://api.elevenlabs.io/v1').replace(/\/+$/, '');
+    const modelId = this.config.modelId || 'eleven_multilingual_v2';
+    const language = this.config.language || options.language || 'vi-VN';
+
+    try {
+      const headers: Record<string, string> = {
+        'Accept': 'audio/mpeg',
+        'Content-Type': 'application/json',
+      };
+      if (apiKey) headers['xi-api-key'] = apiKey;
+
+      const result = await this.fetchFn(`${endpointBaseUrl}/text-to-speech/${encodeURIComponent(voiceId)}`, {
+        method: 'POST',
+        signal: this.abortController.signal,
+        headers,
+        body: JSON.stringify({
+          text,
+          model_id: modelId,
+          language_code: language,
+          voice_settings: {
+            stability: options.tone === 'URGENT' ? 0.58 : 0.68,
+            similarity_boost: 0.75,
+            style: options.style === 'CALM' ? 0.08 : 0.16,
+            use_speaker_boost: true,
+          },
+        }),
+      });
+
+      if (!result.ok) {
+        const body = await result.text().catch(() => '');
+        this.lastError = `NEURAL_TTS_HTTP_${result.status}`;
+        throw new Error(`${this.lastError}${body ? ': request failed' : ''}`);
+      }
+
+      const audio = await result.arrayBuffer();
+      await this.playAudio(audio, {
+        provider: 'ELEVENLABS',
+        mimeType: 'audio/mpeg',
+        voiceId,
+      });
+    } catch (error) {
+      this.lastError = error instanceof Error && error.name === 'AbortError'
+        ? 'NEURAL_TTS_TIMEOUT'
+        : error instanceof Error
+          ? error.message
+          : 'NEURAL_TTS_ERROR';
+      throw error instanceof Error ? error : new Error(this.lastError);
+    } finally {
+      clearTimeout(timeout);
+      this.abortController = null;
+      this._isSpeaking = false;
+    }
+  }
+
+  async stop(): Promise<void> {
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+    this._isSpeaking = false;
+  }
+}
+
+export class FallbackSpeechProvider implements ISpeechProvider {
+  private lastStatus: VoiceProviderStatus;
+
+  constructor(
+    private primary: ISpeechProvider,
+    private fallback: ISpeechProvider,
+  ) {
+    this.lastStatus = {
+      provider: 'SYSTEM_TTS',
+      state: 'READY',
+      lastError: null,
+    };
+  }
+
+  isSpeaking(): boolean {
+    return this.primary.isSpeaking() || this.fallback.isSpeaking();
+  }
+
+  isAvailable(): boolean {
+    return this.primary.isAvailable?.() || this.fallback.isAvailable?.() || true;
+  }
+
+  getStatus(): VoiceProviderStatus {
+    if (this.isSpeaking()) return { ...this.lastStatus, state: 'SPEAKING' };
+    return this.lastStatus;
+  }
+
+  async getAvailableVoices(filterLang?: string): Promise<SpeechVoice[]> {
+    return this.fallback.getAvailableVoices(filterLang);
+  }
+
+  async speak(text: string, options: TtsOptions): Promise<void> {
+    const primaryAvailable = this.primary.isAvailable?.() ?? true;
+    if (primaryAvailable) {
+      try {
+        await this.primary.speak(text, options);
+        this.lastStatus = {
+          provider: this.primary.getStatus?.().provider ?? 'ELEVENLABS',
+          state: 'READY',
+          lastError: null,
+        };
+        return;
+      } catch (error) {
+        this.lastStatus = {
+          provider: 'SYSTEM_TTS',
+          state: 'FALLBACK',
+          lastError: error instanceof Error ? error.message : 'NEURAL_TTS_ERROR',
+          fallbackProvider: 'SYSTEM_TTS',
+        };
+      }
+    } else {
+      this.lastStatus = {
+        provider: 'SYSTEM_TTS',
+        state: 'FALLBACK',
+        lastError: this.primary.getStatus?.().lastError ?? 'NEURAL_TTS_UNAVAILABLE',
+        fallbackProvider: 'SYSTEM_TTS',
+      };
+    }
+
+    await this.fallback.speak(text, options);
+  }
+
+  async stop(): Promise<void> {
+    await Promise.all([
+      this.primary.stop().catch(() => undefined),
+      this.fallback.stop().catch(() => undefined),
+    ]);
   }
 }

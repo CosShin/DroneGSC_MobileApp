@@ -1,7 +1,15 @@
 import { prepareTextForSpeech, type SpeechLanguage } from './SpeechSanitizer';
 import type { SpeechTone } from '../ai/AiTypes';
 import { getEffectiveProsody } from './SpokenResponseBuilder';
-import { ISpeechProvider, SystemSpeechProvider } from './SpeechProvider';
+import {
+  ElevenLabsVoiceProvider,
+  FallbackSpeechProvider,
+  ISpeechProvider,
+  SystemSpeechProvider,
+  type NeuralAudioPlayback,
+  type NeuralVoiceConfig,
+  type VoiceProviderStatus,
+} from './SpeechProvider';
 
 export type VoiceGender = 'MALE' | 'FEMALE' | 'UNKNOWN';
 
@@ -62,12 +70,15 @@ export function cleanTextForSpeech(raw: string): string {
 
 export class AiSpeechService {
   private provider: ISpeechProvider;
+  private systemProvider: SystemSpeechProvider;
+  private elevenLabsProvider: ElevenLabsVoiceProvider | null = null;
   private listeners = new Set<(isSpeaking: boolean) => void>();
 
   constructor(customProvider?: ISpeechProvider) {
-    this.provider = customProvider || new SystemSpeechProvider((speaking) => {
+    this.systemProvider = new SystemSpeechProvider((speaking) => {
       this.listeners.forEach(l => l(speaking));
     });
+    this.provider = customProvider || this.systemProvider;
   }
 
   get isSpeaking(): boolean {
@@ -76,6 +87,29 @@ export class AiSpeechService {
 
   setProvider(provider: ISpeechProvider) {
     this.provider = provider;
+  }
+
+  configureNeuralVoice(config: NeuralVoiceConfig | null, playback?: NeuralAudioPlayback) {
+    if (!config || config.provider !== 'ELEVENLABS') {
+      this.elevenLabsProvider = null;
+      this.provider = this.systemProvider;
+      return;
+    }
+
+    if (this.elevenLabsProvider) {
+      this.elevenLabsProvider.configure(config);
+    } else {
+      this.elevenLabsProvider = new ElevenLabsVoiceProvider(config, { playAudio: playback });
+    }
+    this.provider = new FallbackSpeechProvider(this.elevenLabsProvider, this.systemProvider);
+  }
+
+  getProviderStatus(): VoiceProviderStatus {
+    return this.provider.getStatus?.() ?? {
+      provider: 'SYSTEM_TTS',
+      state: this.provider.isSpeaking() ? 'SPEAKING' : 'READY',
+      lastError: null,
+    };
   }
 
   subscribe(listener: (isSpeaking: boolean) => void): () => void {

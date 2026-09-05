@@ -2,6 +2,7 @@ import React from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { DiagnosticsOverlay } from '../../components/common/DiagnosticsOverlay';
+import { DraggableFloatingControl } from '../../components/common/DraggableFloatingControl';
 import { WarningBanner } from '../../components/common/WarningBanner';
 import { CommandButton } from '../../components/gcs/Primitives';
 import { DualJoystickController } from '../../components/joystick/DualJoystickController';
@@ -174,16 +175,21 @@ export function FlyScreen() {
       <DiagnosticsOverlay />
 
       {/* AI Assistant Button below the logo on the left */}
-      <View
-        pointerEvents="box-none"
-        style={[styles.viewActionColumn, layout.isCompactLandscape && styles.viewActionColumnCompact]}
+      <DraggableFloatingControl
+        initialPosition={{
+          x: layout.isCompactLandscape ? 10 : 14,
+          y: layout.isCompactLandscape ? 66 : 74,
+        }}
+        style={styles.viewActionColumn}
+        onPress={() => dispatch(setAiAssistantOpen(true))}
       >
         <FlightAssistantButton
           variant="rail"
           compact={layout.isCompactLandscape}
           onPress={() => dispatch(setAiAssistantOpen(true))}
+          interactive={false}
         />
-      </View>
+      </DraggableFloatingControl>
 
       {/* ARM/TAKEOFF/LAND remain stacked on the right. */}
       <View
@@ -338,17 +344,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   viewActionColumn: {
-    position: 'absolute',
-    top: 74,
-    left: 14,
     zIndex: layers.controls,
     elevation: layers.controls,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  viewActionColumnCompact: {
-    top: 66,
-    left: 10,
   },
   viewAction: {
     width: 78,

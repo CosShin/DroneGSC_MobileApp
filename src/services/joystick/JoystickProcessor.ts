@@ -3,10 +3,14 @@ import { JoystickInput, FlightControlInput } from '../../types/joystick';
 import { InputMapper } from './InputMapper';
 import { AppConfig } from '../../config';
 import { safetyLayer } from '../command/SafetyLayer';
+import { buildReleasedStickNeutralFrame, type JoystickSide } from './JoystickNeutralFrames';
+import { createDevDiagnostics } from '../../utils/devDiagnostics';
 
 export type FlightControlListener = (input: FlightControlInput) => void;
 
-class JoystickProcessor {
+const devLog = createDevDiagnostics('JOYSTICK', { minIntervalMs: 250, maxPerKey: 240 });
+
+export class JoystickProcessor {
   private leftStick: JoystickInput = { x: 0, y: 0, active: false, timestamp: 0 };
   private rightStick: JoystickInput = { x: 0, y: 0, active: false, timestamp: 0 };
   private output: FlightControlInput = {
@@ -22,28 +26,43 @@ class JoystickProcessor {
   private appState: AppStateStatus = AppState.currentState;
   private listeners: FlightControlListener[] = [];
   private hadActiveInput = false;
+  private txWindowStartedAt = Date.now();
+  private txPacketsInWindow = 0;
+  private lastTxAt = 0;
 
   updateLeftStick(x: number, y: number, active: boolean) {
     const wasActive = this.hasActiveInput();
+    const releasedWhileRightActive = this.leftStick.active && !active && this.rightStick.active;
     this.leftStick = { x, y, active, timestamp: Date.now() };
+    devLog('left-input', { yawRaw: x, throttleRaw: y, active, rightActive: this.rightStick.active });
+    if (releasedWhileRightActive) this.sendReleasedStickNeutralFrame('LEFT');
     this.handleActivityTransition(wasActive);
   }
 
   updateRightStick(x: number, y: number, active: boolean) {
     const wasActive = this.hasActiveInput();
+    const releasedWhileLeftActive = this.rightStick.active && !active && this.leftStick.active;
     this.rightStick = { x, y, active, timestamp: Date.now() };
+    devLog('right-input', { rollRaw: x, pitchRaw: -y, active, leftActive: this.leftStick.active });
+    if (releasedWhileLeftActive) this.sendReleasedStickNeutralFrame('RIGHT');
     this.handleActivityTransition(wasActive);
   }
 
   onProcessedInput(listener: FlightControlListener) {
     this.listeners.push(listener);
-    return () => { this.listeners = this.listeners.filter(value => value !== listener); };
+    devLog('listener-add', { count: this.listeners.length });
+    return () => {
+      this.listeners = this.listeners.filter(value => value !== listener);
+      devLog('listener-remove', { count: this.listeners.length });
+    };
   }
 
   start() {
     if (this.intervalId) return;
     this.appState = AppState.currentState;
+    devLog('start', { updateRateHz: AppConfig.JOYSTICK_UPDATE_RATE_HZ, appState: this.appState });
     this.appStateSubscription = AppState.addEventListener('change', state => {
+      devLog('appstate', { previous: this.appState, next: state });
       this.appState = state;
       if (state !== 'active') this.releaseInputs();
     });
@@ -51,6 +70,7 @@ class JoystickProcessor {
   }
 
   stop() {
+    devLog('stop', { txPacketsInWindow: this.txPacketsInWindow, lastTxAgeMs: this.lastTxAt ? Date.now() - this.lastTxAt : null });
     if (this.intervalId) clearInterval(this.intervalId);
     this.intervalId = null;
     this.appStateSubscription?.remove();
@@ -83,7 +103,7 @@ class JoystickProcessor {
       timestamp: now,
     };
     this.listeners.forEach(listener => listener(this.output));
-    safetyLayer.executeJoystickCommand(this.output, { deadmanActive: true });
+    this.executeJoystickCommand(this.output, { deadmanActive: true }, 'deadman');
   }
 
   private releaseInputs() {
@@ -118,12 +138,44 @@ class JoystickProcessor {
   }
 
   private expireStaleStickInputs(now: number) {
-    if (this.leftStick.active && now - this.leftStick.timestamp > AppConfig.JOYSTICK_COMMAND_TIMEOUT_MS) {
+    const leftExpired = this.leftStick.active && now - this.leftStick.timestamp > AppConfig.JOYSTICK_COMMAND_TIMEOUT_MS;
+    const rightExpired = this.rightStick.active && now - this.rightStick.timestamp > AppConfig.JOYSTICK_COMMAND_TIMEOUT_MS;
+    const rightStillActive = this.rightStick.active && !rightExpired;
+    const leftStillActive = this.leftStick.active && !leftExpired;
+
+    if (leftExpired) {
       this.leftStick = { x: 0, y: 0, active: false, timestamp: now };
+      if (rightStillActive) this.sendReleasedStickNeutralFrame('LEFT', now);
     }
-    if (this.rightStick.active && now - this.rightStick.timestamp > AppConfig.JOYSTICK_COMMAND_TIMEOUT_MS) {
+    if (rightExpired) {
       this.rightStick = { x: 0, y: 0, active: false, timestamp: now };
+      if (leftStillActive) this.sendReleasedStickNeutralFrame('RIGHT', now);
     }
+  }
+
+  private sendReleasedStickNeutralFrame(side: JoystickSide, timestamp = Date.now()) {
+    const neutralFrame = buildReleasedStickNeutralFrame(this.output, side, timestamp);
+    const hasReleasedAxis = Object.values(neutralFrame.validAxes).some(Boolean);
+    if (!hasReleasedAxis) return;
+    if (side === 'LEFT') {
+      this.output = {
+        ...this.output,
+        yaw: 0,
+        throttle: 0.5,
+        validAxes: { ...this.output.validAxes, yaw: false, throttle: false },
+        timestamp,
+      };
+    } else {
+      this.output = {
+        ...this.output,
+        roll: 0,
+        pitch: 0,
+        validAxes: { ...this.output.validAxes, roll: false, pitch: false },
+        timestamp,
+      };
+    }
+    this.listeners.forEach(listener => listener(neutralFrame));
+    this.executeJoystickCommand(neutralFrame, { finalNeutral: true }, `neutral-${side.toLowerCase()}`);
   }
 
   private sendNeutralFrame(timestamp = Date.now()) {
@@ -141,7 +193,34 @@ class JoystickProcessor {
       timestamp,
     };
     this.listeners.forEach(listener => listener(this.output));
-    safetyLayer.executeJoystickCommand(this.output, { finalNeutral: true });
+    this.executeJoystickCommand(this.output, { finalNeutral: true }, 'neutral-all');
+  }
+
+  private executeJoystickCommand(
+    input: FlightControlInput,
+    options: { deadmanActive?: boolean; finalNeutral?: boolean },
+    reason: string,
+  ) {
+    const now = Date.now();
+    if (now - this.txWindowStartedAt >= 1000) {
+      this.txWindowStartedAt = now;
+      this.txPacketsInWindow = 0;
+    }
+    this.txPacketsInWindow++;
+    this.lastTxAt = now;
+    devLog('tx', {
+      reason,
+      roll: input.roll,
+      pitch: input.pitch,
+      yaw: input.yaw,
+      throttle: input.throttle,
+      validAxes: input.validAxes,
+      txPps: this.txPacketsInWindow,
+      lastPacketAgeMs: 0,
+      listeners: this.listeners.length,
+      options,
+    });
+    safetyLayer.executeJoystickCommand(input, options);
   }
 }
 

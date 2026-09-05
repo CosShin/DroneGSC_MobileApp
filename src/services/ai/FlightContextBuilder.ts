@@ -80,6 +80,7 @@ export function buildFlightContext(
     bytesSent: connection.bytesSent,
     packetsLost: connection.packetsLost,
     mavlinkVersion: connection.mavlinkVersion,
+    sessionId: connection.sessionId ?? null,
   };
 
   // 3. Battery State (Truthful: null if not received)

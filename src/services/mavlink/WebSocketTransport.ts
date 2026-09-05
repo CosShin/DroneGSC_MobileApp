@@ -5,9 +5,14 @@ import {
   TransportDiagnostics,
   TransportStatus,
 } from './MavlinkTransport';
+import { createDevDiagnostics } from '../../utils/devDiagnostics';
+
+const devLog = createDevDiagnostics('WS', { minIntervalMs: 1000, maxPerKey: 80 });
+let nextWebSocketTransportId = 1;
 
 export class WebSocketTransport implements MavlinkTransport {
   readonly kind = 'WEBSOCKET' as const;
+  private readonly diagnosticId = nextWebSocketTransportId++;
   private socket: WebSocket | null = null;
   private data = new Set<TransportDataListener>();
   private errors = new Set<(error: Error) => void>();
@@ -40,8 +45,9 @@ export class WebSocketTransport implements MavlinkTransport {
     this.txBytes = 0;
     this.rxPackets = 0;
     this.txPackets = 0;
+    devLog(`socket:${this.diagnosticId}:created`, { endpoint: endpoint.url, listeners: this.data.size });
     return new Promise<void>((resolve,reject) => { const socket = new WebSocket(endpoint.url!); socket.binaryType = 'arraybuffer'; this.socket = socket; let opened = false;
-      socket.onopen = () => { opened = true; this.connectedAt = Date.now(); this.setStatus('READY'); resolve(); };
+      socket.onopen = () => { opened = true; this.connectedAt = Date.now(); devLog(`socket:${this.diagnosticId}:open`, { endpoint: this.endpointUrl, listeners: this.data.size }); this.setStatus('READY'); resolve(); };
       socket.onmessage = event => {
         const incoming = event.data;
         this.messageChain = this.messageChain.then(async () => {
@@ -50,16 +56,16 @@ export class WebSocketTransport implements MavlinkTransport {
           else this.reportError(new Error('WEBSOCKET_TEXT_FRAME_REJECTED'));
         }).catch(() => this.reportError(new Error('WEBSOCKET_BINARY_READ_FAILED')));
       };
-      socket.onerror = () => { const error = new Error('WEBSOCKET_TRANSPORT_ERROR'); this.reportError(error); if (!opened) reject(error); };
-      socket.onclose = event => { this.closeCode = event.code ?? null; this.setStatus('IDLE'); if (opened) this.reportError(new Error(`WEBSOCKET_CLOSED_${event.code ?? 0}`)); };
+      socket.onerror = () => { const error = new Error('WEBSOCKET_TRANSPORT_ERROR'); devLog(`socket:${this.diagnosticId}:error`, { endpoint: this.endpointUrl, readyState: socket.readyState }); this.reportError(error); if (!opened) reject(error); };
+      socket.onclose = event => { this.closeCode = event.code ?? null; devLog(`socket:${this.diagnosticId}:close`, { code: this.closeCode, opened, rxPackets: this.rxPackets, txPackets: this.txPackets }); this.setStatus('IDLE'); if (opened) this.reportError(new Error(`WEBSOCKET_CLOSED_${event.code ?? 0}`)); };
     });
   }
   send(data: Uint8Array) { if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('WEBSOCKET_NOT_OPEN')); const copy = new Uint8Array(data.byteLength); copy.set(data); this.socket.send(copy.buffer); this.txBytes += copy.byteLength; this.txPackets++; return Promise.resolve(); }
-  disconnect() { if (this.socket) { this.setStatus('CLOSING'); this.socket.onopen = null; this.socket.onmessage = null; this.socket.onerror = null; this.socket.onclose = null; this.socket.close(); } this.socket = null; if (this.flushTimer) clearTimeout(this.flushTimer); this.flushTimer = null; this.receiveQueue = []; this.queuedBytes = 0; this.messageChain = Promise.resolve(); this.setStatus('IDLE'); }
+  disconnect() { if (this.socket) { devLog(`socket:${this.diagnosticId}:disconnect`, { readyState: this.socket.readyState, rxPackets: this.rxPackets, txPackets: this.txPackets }); this.setStatus('CLOSING'); this.socket.onopen = null; this.socket.onmessage = null; this.socket.onerror = null; this.socket.onclose = null; this.socket.close(); } this.socket = null; if (this.flushTimer) clearTimeout(this.flushTimer); this.flushTimer = null; this.receiveQueue = []; this.queuedBytes = 0; this.messageChain = Promise.resolve(); this.setStatus('IDLE'); }
   getStatus() { return this.status; }
-  onData(listener: TransportDataListener) { this.data.add(listener); return () => this.data.delete(listener); }
-  onError(listener: (error: Error) => void) { this.errors.add(listener); return () => this.errors.delete(listener); }
-  onStatus(listener: (status: TransportStatus) => void) { this.statusListeners.add(listener); return () => this.statusListeners.delete(listener); }
+  onData(listener: TransportDataListener) { this.data.add(listener); devLog(`socket:${this.diagnosticId}:listener-data:add`, { count: this.data.size }); return () => { this.data.delete(listener); devLog(`socket:${this.diagnosticId}:listener-data:remove`, { count: this.data.size }); }; }
+  onError(listener: (error: Error) => void) { this.errors.add(listener); devLog(`socket:${this.diagnosticId}:listener-error:add`, { count: this.errors.size }); return () => { this.errors.delete(listener); devLog(`socket:${this.diagnosticId}:listener-error:remove`, { count: this.errors.size }); }; }
+  onStatus(listener: (status: TransportStatus) => void) { this.statusListeners.add(listener); devLog(`socket:${this.diagnosticId}:listener-status:add`, { count: this.statusListeners.size }); return () => { this.statusListeners.delete(listener); devLog(`socket:${this.diagnosticId}:listener-status:remove`, { count: this.statusListeners.size }); }; }
   getDiagnostics(): TransportDiagnostics {
     return {
       kind: this.kind,
@@ -84,6 +90,7 @@ export class WebSocketTransport implements MavlinkTransport {
     this.lastDataAt = Date.now();
     this.rxBytes += bytes.byteLength;
     this.rxPackets++;
+    devLog(`socket:${this.diagnosticId}:rx`, { bytes: bytes.byteLength, rxPackets: this.rxPackets, bufferedAmount: this.socket?.bufferedAmount ?? 0 });
     this.enqueue(bytes);
   }
 
@@ -107,10 +114,11 @@ export class WebSocketTransport implements MavlinkTransport {
     for (const chunk of this.receiveQueue) { merged.set(chunk, offset); offset += chunk.byteLength; }
     this.receiveQueue = [];
     this.queuedBytes = 0;
+    devLog(`socket:${this.diagnosticId}:flush`, { bytes: merged.byteLength, dataListeners: this.data.size });
     this.data.forEach(listener => listener(merged, { address: this.endpointUrl, port: 0 }));
   }
 
-  private reportError(error: Error) { this.lastError = error.message; this.setStatus('ERROR'); this.errors.forEach(listener => listener(error)); }
+  private reportError(error: Error) { this.lastError = error.message; devLog(`socket:${this.diagnosticId}:report-error`, { error: error.message, listeners: this.errors.size }); this.setStatus('ERROR'); this.errors.forEach(listener => listener(error)); }
   private setStatus(status: TransportStatus) {
     if (this.status === status) return;
     this.status = status;

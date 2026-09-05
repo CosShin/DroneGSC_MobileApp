@@ -10,11 +10,16 @@ export type SpeechTone = 'NORMAL' | 'INFORMATIVE' | 'POSITIVE' | 'CAUTION' | 'UR
 export type SemanticCardType =
   | 'FLIGHT_STATUS'
   | 'PREFLIGHT_CHECK'
+  | 'SYSTEM_HEALTH'
+  | 'CONNECTION_DIAG'
   | 'MAVLINK_DIAG'
+  | 'ARM_DIAG'
+  | 'PARAMETER_CHANGE'
   | 'CAMERA_ANALYSIS'
   | 'WARNING'
   | 'RECOMMENDATION'
-  | 'MISSION_REVIEW';
+  | 'MISSION_REVIEW'
+  | 'FLIGHT_DEBRIEF';
 
 export interface SemanticMetricItem {
   label: string;
@@ -72,6 +77,7 @@ export interface NormalizedConnectionState {
   bytesSent: number;
   packetsLost: number;
   mavlinkVersion: number | null;
+  sessionId?: string | null;
 }
 
 export interface NormalizedBatteryState {
@@ -165,10 +171,14 @@ export interface FlightContextSnapshot {
 }
 
 export type AiQuickActionType = 
+  | 'WHATS_HAPPENING'
+  | 'SYSTEM_HEALTH'
   | 'PREFLIGHT' 
   | 'WHY_CANT_ARM' 
+  | 'CONNECTION_DOCTOR'
   | 'MAVLINK_CHECK' 
   | 'MISSION_REVIEW'
+  | 'FLIGHT_DEBRIEF'
   | 'ANALYZE_CAMERA'
   | 'CHECK_LANDING_MARKER';
 

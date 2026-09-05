@@ -1,5 +1,5 @@
 import React from 'react';
-import { AppState, type AppStateStatus } from 'react-native';
+import { AppState, Platform, type AppStateStatus } from 'react-native';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectVideoSettings } from '../store/settings/settingsSlice';
 import {
@@ -13,8 +13,18 @@ import {
 import { selectWebRtcConfig } from '../video/VideoConfig';
 import { buildMediaMtxWebRtcUrl } from '../video/VideoSourceResolver';
 import type { VideoRuntimeState, VideoStatus } from '../video/VideoTypes';
+import { createDevDiagnostics } from '../utils/devDiagnostics';
 
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 3_000, 5_000] as const;
+const devLog = createDevDiagnostics('VIDEO', { minIntervalMs: 500, maxPerKey: 120 });
+
+function isPermanentVideoFailure(message: string) {
+  const normalized = message.toLowerCase();
+  return normalized.includes('app transport security')
+    || normalized.includes('ats blocks')
+    || normalized.includes('tls')
+    || normalized.includes('secure connection');
+}
 const EMPTY_RUNTIME: VideoRuntimeState = {
   status: 'IDLE',
   currentUrl: null,
@@ -44,7 +54,7 @@ export function useVideoStream(enabled = true, publishGlobalRuntime = false) {
   );
   const resolved = React.useMemo(() => {
     try {
-      return { url: buildMediaMtxWebRtcUrl(config), error: null };
+      return { url: buildMediaMtxWebRtcUrl(config, { platform: Platform.OS }), error: null };
     } catch (error) {
       return { url: null, error: error instanceof Error ? error.message : 'Invalid video configuration.' };
     }
@@ -104,21 +114,28 @@ export function useVideoStream(enabled = true, publishGlobalRuntime = false) {
     if (resetAttempts) attemptRef.current = 0;
     setPlayerPageLoaded(false);
     setReloadNonce(value => value + 1);
+    devLog('connect', { resetAttempts, enabled, url: resolved.url });
     reportStatus('CONNECTING');
-  }, [clearTimer, reportStatus]);
+  }, [clearTimer, enabled, reportStatus, resolved.url]);
 
   const fail = React.useCallback((message: string) => {
     if (failurePendingRef.current) return;
     failurePendingRef.current = true;
     clearTimer();
     setPlayerPageLoaded(false);
+    devLog('failure', { message, enabled, autoReconnect: config.autoReconnect, appState: appStateRef.current });
     reportFailure(message);
+    if (isPermanentVideoFailure(message)) {
+      devLog('no-retry-permanent-failure', { message });
+      return;
+    }
     if (!enabled || !config.autoReconnect || appStateRef.current !== 'active') return;
 
     const attempt = attemptRef.current + 1;
     attemptRef.current = attempt;
     reportReconnect(attempt);
     const delay = RECONNECT_DELAYS_MS[Math.min(attempt - 1, RECONNECT_DELAYS_MS.length - 1)];
+    devLog('schedule-reconnect', { attempt, delay });
     timerRef.current = setTimeout(() => connect(false), delay);
   }, [clearTimer, config.autoReconnect, connect, enabled, reportFailure, reportReconnect]);
 
@@ -139,6 +156,7 @@ export function useVideoStream(enabled = true, publishGlobalRuntime = false) {
   React.useEffect(() => {
     const subscription = AppState.addEventListener('change', nextState => {
       const wasBackground = appStateRef.current !== 'active';
+      devLog('appstate', { previous: appStateRef.current, next: nextState, enabled });
       appStateRef.current = nextState;
       if (nextState !== 'active') {
         clearTimer();
@@ -151,14 +169,19 @@ export function useVideoStream(enabled = true, publishGlobalRuntime = false) {
 
   const onLoadStart = React.useCallback(() => {
     setPlayerPageLoaded(false);
+    devLog('load-start', { url: resolved.url });
     reportStatus('CONNECTING');
-  }, [reportStatus]);
-  const onLoadEnd = React.useCallback(() => setPlayerPageLoaded(true), []);
+  }, [reportStatus, resolved.url]);
+  const onLoadEnd = React.useCallback(() => {
+    devLog('load-end', { url: resolved.url });
+    setPlayerPageLoaded(true);
+  }, [resolved.url]);
   const onVideoPlaying = React.useCallback(() => {
     clearTimer();
     attemptRef.current = 0;
+    devLog('playing', { url: resolved.url });
     reportPlaying();
-  }, [clearTimer, reportPlaying]);
+  }, [clearTimer, reportPlaying, resolved.url]);
 
   const runtime = publishGlobalRuntime ? globalRuntime : localRuntime;
 

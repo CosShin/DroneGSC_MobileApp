@@ -129,7 +129,7 @@ export function PlanScreen() {
     }
   };
 
-  // Download with Decompiler
+  // Read mission from Pixhawk using the existing MAVLink mission download protocol.
   const handleDownload = async () => {
     if (syncing || transferActiveRef.current) return;
     transferActiveRef.current = true;
@@ -143,10 +143,10 @@ export function PlanScreen() {
         editorItems: decompiledEditorItems,
         wireItems: downloadedWireItems,
       }));
-      Alert.alert('Mission Downloaded', `Successfully reconstructed ${decompiledEditorItems.length} mission items from autopilot.`);
+      Alert.alert('Mission Read from Pixhawk', `Successfully reconstructed ${decompiledEditorItems.length} mission items from autopilot.`);
     } catch (error) {
       dispatch(setSyncStatus('ERROR'));
-      Alert.alert('Mission Download Failed', error instanceof Error ? error.message : 'Unknown error');
+      Alert.alert('Read Mission Failed', error instanceof Error ? error.message : 'Unknown error');
     } finally {
       transferActiveRef.current = false;
     }
@@ -276,6 +276,15 @@ export function PlanScreen() {
 
             <View style={styles.headerRightActions}>
               <TouchableOpacity
+                accessibilityLabel="Read mission from Pixhawk"
+                disabled={!truth.connected || syncing}
+                style={[styles.readBtn, (!truth.connected || syncing) && styles.iconBtnDisabled]}
+                onPress={handleDownload}
+              >
+                <MaterialCommunityIcons name="database-import-outline" size={15} color="#2586EA" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
                 accessibilityLabel="Open raw MAVLink debug"
                 style={styles.rawBtn}
                 onPress={handleOpenRawMission}
@@ -339,8 +348,8 @@ export function PlanScreen() {
       {/* 4. Bottom Command Toolbar */}
       <BottomActionBar>
         <CommandButton
-          label={syncing ? 'SYNCING' : layout.isCompactLandscape ? 'DOWN' : 'DOWNLOAD'}
-          icon="download"
+          label={syncing ? 'SYNCING' : layout.isCompactLandscape ? 'READ' : 'READ PIXHAWK'}
+          icon="database-import-outline"
           style={styles.action}
           disabled={!truth.connected || syncing}
           onPress={handleDownload}
@@ -523,6 +532,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(37, 134, 234, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  readBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(16, 185, 129, 0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.30)',
+  },
+  iconBtnDisabled: {
+    opacity: 0.42,
   },
   collapse: {
     width: 26,

@@ -1,4 +1,5 @@
 import type React from 'react';
+import { Platform } from 'react-native';
 import type { VideoSettings } from '../settings/types/video';
 import { platformCapabilities, type PlatformCapability } from '../platform/PlatformCapabilities';
 import { validateRtspUrl, validateWebRtcConfig } from './VideoSourceResolver';
@@ -22,7 +23,7 @@ class WebRtcVideoProvider implements VideoProvider {
   getCapability() { return platformCapabilities.webRtc; }
   validate(settings: VideoSettings) {
     try {
-      validateWebRtcConfig(settings);
+      validateWebRtcConfig(settings, { platform: Platform.OS });
       return null;
     } catch (error) {
       return error instanceof Error ? error.message : 'Invalid WebRTC configuration.';

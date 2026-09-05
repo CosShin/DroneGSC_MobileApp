@@ -117,12 +117,19 @@ export function processSemanticResponse(
     const connection = state?.connection;
     const home = state?.home;
 
-    const mode = drone?.flightMode || 'LOITER';
-    const isArmed = drone?.armed ?? false;
-    const alt = telemetry?.gps?.value.altitude != null ? Number(telemetry.gps.value.altitude.toFixed(1)) : null;
-    const batt = telemetry?.battery?.value.percentage != null ? Math.round(telemetry.battery.value.percentage) : null;
-    const sats = telemetry?.gps?.value.satellites ?? null;
-    const gpsFix = telemetry?.gps?.value.gpsFix ?? 0;
+    const rawMode = text.match(/(?:chế độ|mode)\s*:\s*([A-Z_]+)/i)?.[1]?.toUpperCase() ?? null;
+    const rawArmed = text.match(/(?:armed)\s*:\s*(YES|NO|TRUE|FALSE)/i)?.[1]?.toUpperCase() ?? null;
+    const rawAlt = text.match(/(?:độ cao|altitude)\s*:\s*([0-9]+(?:[.,][0-9]+)?)/i)?.[1]?.replace(',', '.');
+    const rawBatt = text.match(/(?:pin|battery|batt)\s*:\s*([0-9]+)\s*%/i)?.[1];
+    const rawSats = text.match(/(?:gps)\s*:\s*([0-9]+)\s*(?:sat|vệ tinh)?/i)?.[1];
+    const rawFix3d = /3d\s*fix/i.test(text);
+
+    const mode = drone?.flightMode || rawMode || 'UNKNOWN';
+    const isArmed = drone?.armed ?? (rawArmed === 'YES' || rawArmed === 'TRUE');
+    const alt = telemetry?.gps?.value.altitude != null ? Number(telemetry.gps.value.altitude.toFixed(1)) : rawAlt != null ? Number(rawAlt) : null;
+    const batt = telemetry?.battery?.value.percentage != null ? Math.round(telemetry.battery.value.percentage) : rawBatt != null ? Number(rawBatt) : null;
+    const sats = telemetry?.gps?.value.satellites ?? (rawSats != null ? Number(rawSats) : null);
+    const gpsFix = telemetry?.gps?.value.gpsFix ?? (rawFix3d ? 3 : 0);
     const isLinkGood = connection?.status === 'CONNECTED' && connection?.vehicleState === 'CONNECTED';
 
     let homeDist: number | null = null;

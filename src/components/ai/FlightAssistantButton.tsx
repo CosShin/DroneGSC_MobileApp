@@ -8,6 +8,7 @@ interface Props {
   compact?: boolean;
   variant?: 'pill' | 'rail';
   style?: ViewStyle;
+  interactive?: boolean;
 }
 
 /**
@@ -19,6 +20,7 @@ export const FlightAssistantButton = React.memo(function FlightAssistantButton({
   onLongPress,
   compact = false,
   style,
+  interactive = true,
 }: Props) {
   return (
     <AnimatedAiMascot
@@ -26,7 +28,7 @@ export const FlightAssistantButton = React.memo(function FlightAssistantButton({
       onLongPress={onLongPress}
       size={compact ? 34 : 40}
       showStatusDot={true}
-      interactive={true}
+      interactive={interactive}
       style={style}
     />
   );

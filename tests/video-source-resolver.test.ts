@@ -22,6 +22,17 @@ test('supports HTTPS hostnames without hardcoding a LAN address', () => {
   assert.equal(buildMediaMtxBrowserUrl({ ...config, scheme: 'https', host: 'video.anitech.example', port: 443 }), 'https://video.anitech.example:443/landing-cam');
 });
 
+test('iOS can build WebRTC player URLs for Tailscale addresses', () => {
+  assert.equal(
+    buildMediaMtxWebRtcUrl({ ...config, host: '100.81.87.111' }, { platform: 'ios' }),
+    'http://100.81.87.111:8889/landing-cam?controls=false&muted=true&autoplay=true&playsInline=true&disablepictureinpicture=true',
+  );
+  assert.equal(
+    buildMediaMtxWebRtcUrl({ ...config, host: '100.81.87.111', scheme: 'https', port: 443 }, { platform: 'ios' }),
+    'https://100.81.87.111:443/landing-cam?controls=false&muted=true&autoplay=true&playsInline=true&disablepictureinpicture=true',
+  );
+});
+
 test('rejects unsafe hosts, paths and ports', () => {
   assert.throws(() => buildMediaMtxWebRtcUrl({ ...config, host: 'host/path?x=1' }), VideoConfigError);
   assert.throws(() => buildMediaMtxWebRtcUrl({ ...config, streamPath: '../landing-cam' }), VideoConfigError);

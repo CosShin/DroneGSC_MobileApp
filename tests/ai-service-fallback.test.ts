@@ -118,7 +118,7 @@ test('AiService executePrompt does NOT fallback when enableFallback is false', a
   };
 
   try {
-    await aiService.sendUserMessage('Preflight check');
+    await aiService.sendUserMessage('Explain PID tuning');
     const state = aiService.getState();
     const lastMsg = state.messages[state.messages.length - 1];
 
