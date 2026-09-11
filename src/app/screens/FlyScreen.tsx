@@ -2,8 +2,6 @@ import React from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { DiagnosticsOverlay } from '../../components/common/DiagnosticsOverlay';
-import { DraggableFloatingControl } from '../../components/common/DraggableFloatingControl';
-import { WarningBanner } from '../../components/common/WarningBanner';
 import { CommandButton } from '../../components/gcs/Primitives';
 import { DualJoystickController } from '../../components/joystick/DualJoystickController';
 import { joystickProcessor } from '../../services/joystick/JoystickProcessor';
@@ -16,9 +14,7 @@ import {
   selectShowJoysticks,
   selectVideoSettings,
   setAutomaticFlightDisplay,
-  setAiAssistantOpen,
 } from '../../store/settings/settingsSlice';
-import { FlightAssistantButton } from '../../components/ai/FlightAssistantButton';
 import { selectVideoRuntime } from '../../store/videoSlice';
 import { selectIsArmed, selectDroneMode } from '../../store/drone/droneSlice';
 import { selectPendingCommand } from '../../store/command/commandSlice';
@@ -29,6 +25,7 @@ import { useScreenOrientation } from '../../hooks/useScreenOrientation';
 import { useTruthfulTelemetry } from '../../hooks/useTruthfulTelemetry';
 import { useGcsLayout } from '../../hooks/useGcsLayout';
 import { resolveInitialFlightDisplay } from '../../video/FlightDisplayState';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const MODES = [
   FlightMode.STABILIZE,
@@ -49,6 +46,7 @@ export function FlyScreen() {
   const dispatch = useAppDispatch();
   const truth = useTruthfulTelemetry();
   const layout = useGcsLayout();
+  const insets = useSafeAreaInsets();
 
   const primaryView = useAppSelector(selectPrimaryFlyView);
   const displayMode = useAppSelector(selectFlightDisplayMode);
@@ -108,13 +106,17 @@ export function FlyScreen() {
   }, []);
 
   const stickSize = Math.max(
-    128,
+    layout.isCompactLandscape ? 166 : 176,
     Math.min(
-      layout.isCompactLandscape ? 144 : layout.isTabletLandscape ? 168 : 156,
-      layout.contentHeight * 0.39
+      layout.isCompactLandscape ? 188 : layout.isTabletLandscape ? 224 : 206,
+      layout.contentHeight * 0.48
     )
   );
   const ready = truth.connected && !pending;
+  const topInset = insets.top;
+  const leftInset = insets.left;
+  const rightInset = insets.right;
+  const bottomInset = insets.bottom;
 
   const confirm = (label: string, run: () => void) => {
     Alert.alert(
@@ -132,11 +134,8 @@ export function FlyScreen() {
       {/* 1. Main Flight Viewport (Manages HUD, Video, Map layers with state preservation) */}
       <FlyMainViewport primaryView={primaryView} displayMode={displayMode} />
 
-      {/* 2. Safety Warnings / PreArm Alert Banner (Positioned cleanly at top center) */}
-      <WarningBanner />
-
-      {/* 3. Virtual Joysticks (coordinated simultaneous dual multi-touch) */}
-      {showSticks && truth.connected && primaryView === 'FLIGHT' ? (
+      {/* 2. Virtual Joysticks remain available over HUD, video and map. */}
+      {showSticks && truth.connected ? (
         <DualJoystickController
           size={stickSize}
           isCompactLandscape={layout.isCompactLandscape}
@@ -147,7 +146,7 @@ export function FlyScreen() {
 
       {/* Compact FPV instruments stay readable over video without stealing touch input. */}
       {primaryView === 'FLIGHT' && displayMode === 'VIDEO' ? (
-        <View style={styles.videoFlightHud} pointerEvents="none">
+        <View style={[styles.videoFlightHud, { bottom: bottomInset + 18 }]} pointerEvents="none">
           <CompactFlightHud />
         </View>
       ) : null}
@@ -158,14 +157,14 @@ export function FlyScreen() {
         icon="tune-variant"
         tone="primary"
         style={layout.isCompactLandscape
-          ? [styles.modeQuickAction, styles.modeQuickActionCompact]
-          : styles.modeQuickAction}
+          ? [styles.modeQuickAction, styles.modeQuickActionCompact, { top: topInset + 8, left: leftInset + 48 }]
+          : [styles.modeQuickAction, { top: topInset + 10, left: leftInset + 20 }]}
         disabled={!truth.connected}
         onPress={() => setModeSheet(true)}
       />
 
       {displayNotice ? (
-        <View pointerEvents="none" style={styles.displayNotice}>
+        <View pointerEvents="none" style={[styles.displayNotice, { top: topInset + 100 }]}>
           <MaterialCommunityIcons name="information-outline" size={14} color="#2F80ED" />
           <Text style={styles.displayNoticeText}>{displayNotice}</Text>
         </View>
@@ -174,27 +173,17 @@ export function FlyScreen() {
       {/* 4. Diagnostics Mini Button */}
       <DiagnosticsOverlay />
 
-      {/* AI Assistant Button below the logo on the left */}
-      <DraggableFloatingControl
-        initialPosition={{
-          x: layout.isCompactLandscape ? 10 : 14,
-          y: layout.isCompactLandscape ? 66 : 74,
-        }}
-        style={styles.viewActionColumn}
-        onPress={() => dispatch(setAiAssistantOpen(true))}
-      >
-        <FlightAssistantButton
-          variant="rail"
-          compact={layout.isCompactLandscape}
-          onPress={() => dispatch(setAiAssistantOpen(true))}
-          interactive={false}
-        />
-      </DraggableFloatingControl>
-
       {/* ARM/TAKEOFF/LAND remain stacked on the right. */}
       <View
         pointerEvents="box-none"
-        style={[styles.commandRail, layout.isCompactLandscape && styles.commandRailCompact]}
+        style={[
+          styles.commandRail,
+          layout.isCompactLandscape && styles.commandRailCompact,
+          {
+            top: topInset + (layout.isCompactLandscape ? 45 : 52),
+            right: rightInset - 24,
+          },
+        ]}
       >
           <CommandButton
             label={armed ? 'DISARM' : 'ARM'}
@@ -299,7 +288,7 @@ const styles = StyleSheet.create({
   modeQuickAction: {
     position: 'absolute',
     top: 10,
-    left: 64,
+    left: 40,
     width: 128,
     height: 30,
     borderRadius: 15,
@@ -308,7 +297,7 @@ const styles = StyleSheet.create({
   },
   modeQuickActionCompact: {
     top: 8,
-    left: 58,
+    left: 40,
     width: 120,
     height: 30,
     borderRadius: 15,
@@ -337,17 +326,11 @@ const styles = StyleSheet.create({
   videoFlightHud: {
     position: 'absolute',
     left: 0,
-    right: 0,
+    right: -24,
     bottom: 18,
     zIndex: layers.information,
     elevation: layers.information,
     alignItems: 'center',
-  },
-  viewActionColumn: {
-    zIndex: layers.controls,
-    elevation: layers.controls,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   viewAction: {
     width: 78,
@@ -358,7 +341,7 @@ const styles = StyleSheet.create({
   commandRail: {
     position: 'absolute',
     top: 52,
-    right: 14,
+    right: -24,
     zIndex: layers.controls,
     elevation: layers.controls,
     alignItems: 'flex-end',
@@ -366,12 +349,12 @@ const styles = StyleSheet.create({
   },
   commandRailCompact: {
     top: 45,
-    right: 10,
+    right: 0,
     gap: 5,
   },
   railAction: {
-    width: 96,
-    height: 34,
+    width: 104,
+    height: 36,
     borderRadius: 12,
     paddingHorizontal: 7,
   },

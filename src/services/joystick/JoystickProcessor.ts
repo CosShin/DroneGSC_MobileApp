@@ -78,6 +78,23 @@ export class JoystickProcessor {
     this.releaseInputs();
   }
 
+  invalidateControlSession() {
+    const now = Date.now();
+    this.leftStick = { x: 0, y: 0, active: false, timestamp: now };
+    this.rightStick = { x: 0, y: 0, active: false, timestamp: now };
+    this.hadActiveInput = false;
+    this.output = {
+      roll: 0,
+      pitch: 0,
+      yaw: 0,
+      throttle: 0.5,
+      validAxes: { roll: false, pitch: false, yaw: false, throttle: false },
+      timestamp: now,
+    };
+    this.listeners.forEach(listener => listener(this.output));
+    devLog('control-session-invalidated', { appState: this.appState });
+  }
+
   private tick() {
     const now = Date.now();
     if (this.appState !== 'active') {

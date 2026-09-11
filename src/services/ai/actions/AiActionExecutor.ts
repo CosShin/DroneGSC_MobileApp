@@ -6,6 +6,7 @@ import { aiActionValidator } from './AiActionValidator';
 import { aiActionAuditLog } from './AiActionAuditLog';
 import { aiSpeechService } from '../../voice/AiSpeechService';
 import type { AiActionProposal } from '../intents/AiIntentTypes';
+import { classifyAiActionFailure } from './AiActionFeedback';
 
 let lazyStore: { getState: () => RootState } | null = null;
 function getStoreState(): RootState | null {
@@ -107,8 +108,11 @@ export class AiActionExecutor {
 
         return { success: true };
       } else {
-        proposal.state = 'FAILED';
         proposal.error = result.error || 'COMMAND_FAILED';
+        const currentWarnings = getStoreState()?.telemetry?.statusTexts
+          ?.filter(msg => Date.now() - msg.timestamp < 30_000)
+          .map(msg => msg.text) ?? [];
+        proposal.state = classifyAiActionFailure(proposal, currentWarnings)?.state ?? 'FAILED';
         onStateChange?.(proposal);
 
         aiActionAuditLog.log({

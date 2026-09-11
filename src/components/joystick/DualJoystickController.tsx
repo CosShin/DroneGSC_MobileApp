@@ -23,10 +23,19 @@ export function DualJoystickController({
   onUpdateLeft,
   onUpdateRight,
 }: DualJoystickControllerProps) {
+  const sideInset = isCompactLandscape ? 30 : 36;
+  const bottomInset = isCompactLandscape ? 20 : 24;
+
   return (
     <View style={styles.controlsLayer} pointerEvents="box-none">
       <View
-        style={[styles.leftStick, isCompactLandscape && styles.leftStickCompact]}
+        style={[
+          styles.leftStick,
+          {
+            left: sideInset,
+            bottom: bottomInset,
+          },
+        ]}
         pointerEvents="auto"
       >
         <VirtualJoystick
@@ -36,7 +45,13 @@ export function DualJoystickController({
         />
       </View>
       <View
-        style={[styles.rightStick, isCompactLandscape && styles.rightStickCompact]}
+        style={[
+          styles.rightStick,
+          {
+            right: sideInset,
+            bottom: bottomInset,
+          },
+        ]}
         pointerEvents="auto"
       >
         <VirtualJoystick
@@ -60,18 +75,8 @@ const styles = StyleSheet.create({
   },
   leftStick: {
     position: 'absolute',
-    left: 20,
-    bottom: 18,
   },
   rightStick: {
     position: 'absolute',
-    right: 20,
-    bottom: 18,
-  },
-  leftStickCompact: {
-    left: 10,
-  },
-  rightStickCompact: {
-    right: 10,
   },
 });

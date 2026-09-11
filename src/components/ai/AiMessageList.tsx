@@ -132,12 +132,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 10,
+    minWidth: 0,
   },
   userRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    minWidth: 0,
   },
   userBubble: {
+    minWidth: 0,
+    flexShrink: 1,
     maxWidth: '85%',
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -152,10 +156,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   assistantRow: {
+    width: '100%',
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
-    maxWidth: '96%',
   },
   assistantAvatar: {
     width: 22,
@@ -170,6 +175,8 @@ const styles = StyleSheet.create({
   },
   assistantBubble: {
     flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: radius.md,
@@ -187,13 +194,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 4,
+    minWidth: 0,
+    gap: 6,
   },
   assistantTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
+    flex: 1,
+    minWidth: 0,
   },
   assistantName: {
+    flexShrink: 1,
     fontSize: 10,
     fontWeight: '800',
     color: '#2586EA',
@@ -214,6 +226,7 @@ const styles = StyleSheet.create({
   msgTime: {
     fontSize: 9,
     color: '#94A3B8',
+    flexShrink: 0,
   },
   assistantText: {
     color: '#1E293B',

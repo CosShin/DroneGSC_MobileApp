@@ -2,7 +2,6 @@ import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { NavigationContainer, StackActions, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlyScreen } from '../screens/FlyScreen';
 import { PlanScreen } from '../screens/PlanScreen';
 import { VehicleScreen } from '../screens/VehicleScreen';
@@ -11,6 +10,8 @@ import { VideoScreen } from '../screens/VideoScreen';
 import { BrandMenu } from '../../components/navigation/BrandMenu';
 import { TopTelemetryHUD } from '../../components/hud/TopTelemetryHUD';
 import { FlightAssistantPanel } from '../../components/ai/FlightAssistantPanel';
+import { FloatingAniAssistant } from '../../components/ai/FloatingAniAssistant';
+import { WarningBanner } from '../../components/common/WarningBanner';
 import { layers } from '../../theme/gcsTheme';
 import { MainRouteName, RootStackParamList } from './navigationConfig';
 
@@ -49,7 +50,7 @@ export function RootNavigator() {
       ref={ref} 
       onStateChange={() => setRoute((ref.getCurrentRoute()?.name as keyof RootStackParamList) ?? 'Fly')}
     >
-      <SafeAreaView style={styles.safe} edges={['top', 'right', 'bottom', 'left']}>
+      <View style={styles.safe}>
         <View style={styles.shell}>
           {/* Main Application Screen Stack */}
           <Stack.Navigator 
@@ -67,19 +68,31 @@ export function RootNavigator() {
             <Stack.Screen name="Video" component={VideoScreen} />
           </Stack.Navigator>
 
+          {/* ANI stays mounted and draggable across every application screen. */}
+          <View pointerEvents="box-none" style={styles.aniOverlay}>
+            <FloatingAniAssistant onOpenHistory={() => dispatch(setAiAssistantOpen(true))} />
+          </View>
+
           {/* Persistent Global Navigation, HUD & AI Assistant Overlay */}
           <View pointerEvents="box-none" style={styles.globalOverlay}>
             {showTelemetryHUD ? (
               <TopTelemetryHUD 
                 showFlightViewSwitcher={route === 'Fly'} 
-                onOpenAi={() => dispatch(setAiAssistantOpen(true))}
+                onOpenSettings={() => navigate('Settings')}
               />
             ) : null}
             <BrandMenu currentRoute={route} onNavigate={navigate} />
             <FlightAssistantPanel visible={aiOpen} onClose={() => dispatch(setAiAssistantOpen(false))} />
           </View>
+
+          {/* Flight safety warnings must remain above every interactive overlay. */}
+          {route === 'Fly' ? (
+            <View pointerEvents="box-none" style={styles.safetyOverlay}>
+              <WarningBanner />
+            </View>
+          ) : null}
         </View>
-      </SafeAreaView>
+      </View>
     </NavigationContainer>
   );
 }
@@ -103,5 +116,15 @@ const styles = StyleSheet.create({
     position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     zIndex: layers.brand,
     elevation: layers.brand,
+  },
+  aniOverlay: {
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
+    zIndex: layers.panel,
+    elevation: layers.panel,
+  },
+  safetyOverlay: {
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
+    zIndex: layers.critical,
+    elevation: layers.critical,
   },
 });

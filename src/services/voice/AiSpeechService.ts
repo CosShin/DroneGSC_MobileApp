@@ -1,6 +1,8 @@
 import { prepareTextForSpeech, type SpeechLanguage } from './SpeechSanitizer';
 import type { SpeechTone } from '../ai/AiTypes';
 import { getEffectiveProsody } from './SpokenResponseBuilder';
+import { segmentMixedText } from './MixedLanguageTts';
+import type { QueueSegmentItem } from './AniSpeechQueue';
 import {
   ElevenLabsVoiceProvider,
   FallbackSpeechProvider,
@@ -23,9 +25,12 @@ export interface SpeechVoice {
 
 export interface TtsOptions {
   voice?: string | null;
+  vietnameseVoice?: string | null;
+  englishVoice?: string | null;
   language?: string;
   rate?: number;
   pitch?: number;
+  volume?: number;
   gender?: 'DEFAULT' | 'MALE' | 'FEMALE';
   tone?: SpeechTone;
   style?: 'NATURAL' | 'COPILOT' | 'CALM';
@@ -73,6 +78,11 @@ export class AiSpeechService {
   private systemProvider: SystemSpeechProvider;
   private elevenLabsProvider: ElevenLabsVoiceProvider | null = null;
   private listeners = new Set<(isSpeaking: boolean) => void>();
+  private preferredVoiceCache = new Map<string, string | null>();
+  private autoSelectedViVoice: string | null = null;
+  private autoSelectedEnVoice: string | null = null;
+  private _isMuted = false;
+  private muteListeners = new Set<(isMuted: boolean) => void>();
 
   constructor(customProvider?: ISpeechProvider) {
     this.systemProvider = new SystemSpeechProvider((speaking) => {
@@ -83,6 +93,45 @@ export class AiSpeechService {
 
   get isSpeaking(): boolean {
     return this.provider.isSpeaking();
+  }
+
+  get isMuted(): boolean {
+    return this._isMuted;
+  }
+
+  setMuted(muted: boolean): void {
+    if (this._isMuted === muted) return;
+    this._isMuted = muted;
+    this.muteListeners.forEach(listener => listener(muted));
+    if (muted) {
+      void this.stop();
+    }
+  }
+
+  /**
+   * Immediately interrupts ongoing speech, clears queue,
+   * transitions ANI state to IDLE, and marks TTS as muted.
+   */
+  async mute(): Promise<void> {
+    this._isMuted = true;
+    this.muteListeners.forEach(listener => listener(true));
+    await this.stop();
+  }
+
+  /**
+   * Unmutes TTS. Does NOT replay previously interrupted or missed speech.
+   */
+  unmute(): void {
+    this._isMuted = false;
+    this.muteListeners.forEach(listener => listener(false));
+  }
+
+  subscribeMute(listener: (isMuted: boolean) => void): () => void {
+    this.muteListeners.add(listener);
+    listener(this._isMuted);
+    return () => {
+      this.muteListeners.delete(listener);
+    };
   }
 
   setProvider(provider: ISpeechProvider) {
@@ -124,13 +173,35 @@ export class AiSpeechService {
     return this.provider.getAvailableVoices(filterLang);
   }
 
+  async autoSelectVoices(): Promise<{ vi: string | null; en: string | null }> {
+    if (typeof this.provider.autoSelectVoices === 'function') {
+      const auto = await this.provider.autoSelectVoices();
+      this.autoSelectedViVoice = auto.vi;
+      this.autoSelectedEnVoice = auto.en;
+      return auto;
+    }
+    return { vi: null, en: null };
+  }
+
   async speak(text: string, options: TtsOptions = {}): Promise<void> {
-    const lang = (options.language || 'vi-VN') as SpeechLanguage;
-    const cleanText = prepareTextForSpeech(text, lang);
-    if (!cleanText) return;
+    if (this._isMuted) return;
+    if (!text || typeof text !== 'string' || !text.trim()) return;
 
     // Interrupt any ongoing speech
     await this.stop();
+
+    const lang = (options.language || 'vi-VN') as SpeechLanguage;
+    let resolvedVoice = options.voice || null;
+    if (!resolvedVoice && options.gender && options.gender !== 'DEFAULT') {
+      const cacheKey = `${lang}:${options.gender}`;
+      if (this.preferredVoiceCache.has(cacheKey)) {
+        resolvedVoice = this.preferredVoiceCache.get(cacheKey) ?? null;
+      } else {
+        const voices = await this.provider.getAvailableVoices(lang).catch(() => []);
+        resolvedVoice = voices.find(voice => voice.gender === options.gender)?.identifier || null;
+        if (resolvedVoice) this.preferredVoiceCache.set(cacheKey, resolvedVoice);
+      }
+    }
 
     // Calculate deterministic prosody based on real flight tone & style
     const tone = options.tone || 'NORMAL';
@@ -142,18 +213,83 @@ export class AiSpeechService {
     );
 
     let effectivePitch = prosody.pitch;
-    if (options.gender === 'MALE' && (options.pitch == null || options.pitch === 1.0)) {
+    if (options.gender === 'MALE' && !resolvedVoice) {
       effectivePitch = Number((prosody.pitch * 0.85).toFixed(2));
-    } else if (options.gender === 'FEMALE' && (options.pitch == null || options.pitch === 1.0)) {
+    } else if (options.gender === 'FEMALE' && !resolvedVoice) {
       effectivePitch = Number((prosody.pitch * 1.05).toFixed(2));
     }
+    effectivePitch = Math.max(0.7, Math.min(1.4, effectivePitch));
+
+    // If provider supports speakSegments (System TTS with mixed language pipeline)
+    if (typeof this.provider.speakSegments === 'function') {
+      const segments = segmentMixedText(text);
+      if (segments.length === 0) return;
+
+      // Ensure auto-selected voices are resolved
+      if (!this.autoSelectedViVoice || !this.autoSelectedEnVoice) {
+        if (typeof this.provider.autoSelectVoices === 'function') {
+          const auto = await this.provider.autoSelectVoices().catch(() => ({ vi: null, en: null }));
+          this.autoSelectedViVoice = auto.vi;
+          this.autoSelectedEnVoice = auto.en;
+        }
+      }
+
+      const queueItems: QueueSegmentItem[] = segments.map(seg => {
+        let voice: string | null = null;
+        if (seg.lang === 'vi-VN') {
+          voice = options.vietnameseVoice || resolvedVoice || this.autoSelectedViVoice || null;
+        } else {
+          voice = options.englishVoice || this.autoSelectedEnVoice || null;
+        }
+
+        return {
+          text: seg.text,
+          lang: seg.lang,
+          voice,
+          rate: prosody.rate,
+          pitch: effectivePitch,
+          volume: options.volume ?? 1.0,
+        };
+      });
+
+      await this.provider.speakSegments(queueItems);
+      return;
+    }
+
+    // Fallback for custom or legacy single-voice providers (e.g. ElevenLabs, unit test mocks)
+    const cleanText = prepareTextForSpeech(text, lang);
+    if (!cleanText) return;
 
     await this.provider.speak(cleanText, {
       ...options,
+      voice: resolvedVoice,
       language: lang,
       rate: prosody.rate,
       pitch: effectivePitch,
+      volume: options.volume ?? 1.0,
     });
+  }
+
+  setVoice(voiceIdentifier: string | null): void {
+    this.preferredVoiceCache.clear();
+  }
+
+  async speakSegments(segments: QueueSegmentItem[]): Promise<void> {
+    if (this._isMuted) return;
+    await this.stop();
+    if (typeof this.provider.speakSegments === 'function') {
+      await this.provider.speakSegments(segments);
+    } else {
+      for (const seg of segments) {
+        await this.provider.speak(seg.text, {
+          language: seg.lang,
+          voice: seg.voice,
+          rate: seg.rate,
+          pitch: seg.pitch,
+          volume: seg.volume ?? 1.0,
+        });
+      }
+    }
   }
 
   async stop(): Promise<void> {
@@ -162,3 +298,5 @@ export class AiSpeechService {
 }
 
 export const aiSpeechService = new AiSpeechService();
+export const aniTtsService = aiSpeechService;
+export const AniTtsService = AiSpeechService;

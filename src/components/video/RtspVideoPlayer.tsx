@@ -48,6 +48,8 @@ export const RtspVideoPlayer = React.memo(function RtspVideoPlayer({
       source={{ uri: resolved.url }}
       autoplay
       muted={settings.muted}
+      autoAspectRatio
+      resizeMode="contain"
       onPlaying={() => { if (publishGlobalRuntime) dispatch(videoPlaying()); }}
       onBuffering={() => { if (publishGlobalRuntime) dispatch(setVideoStatus('CONNECTING')); }}
       onError={() => { if (publishGlobalRuntime) dispatch(videoFailed('RTSP playback failed. Check the camera URL, codec, network route, and native VLC build.')); }}

@@ -21,12 +21,17 @@ export const FlightAssistantButton = React.memo(function FlightAssistantButton({
   compact = false,
   style,
   interactive = true,
+  variant = 'pill',
 }: Props) {
+  const size = variant === 'rail'
+    ? (compact ? 42 : 46)
+    : (compact ? 34 : 40);
+
   return (
     <AnimatedAiMascot
       onPress={onPress}
       onLongPress={onLongPress}
-      size={compact ? 34 : 40}
+      size={size}
       showStatusDot={true}
       interactive={interactive}
       style={style}

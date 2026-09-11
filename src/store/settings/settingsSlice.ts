@@ -30,6 +30,11 @@ import { DEFAULT_JOYSTICK_CONFIG } from '../../settings/defaults/joystick';
 import { AiSettings } from '../../settings/types/ai';
 import { DEFAULT_AI_CONFIG } from '../../settings/defaults/ai';
 
+export interface AniFloatingPosition {
+  xRatio: number;
+  yRatio: number;
+}
+
 export interface SettingsState {
   hydrated: boolean;
   showJoysticks: boolean;
@@ -47,6 +52,7 @@ export interface SettingsState {
   joystick: JoystickSettings;
   ai: AiSettings;
   isAiAssistantOpen: boolean;
+  aiFloatingPosition: AniFloatingPosition | null;
 }
 
 const initialState: SettingsState = {
@@ -66,6 +72,7 @@ const initialState: SettingsState = {
   joystick: DEFAULT_JOYSTICK_CONFIG,
   ai: DEFAULT_AI_CONFIG,
   isAiAssistantOpen: false,
+  aiFloatingPosition: null,
 };
 
 export const settingsSlice = createSlice({
@@ -98,7 +105,33 @@ export const settingsSlice = createSlice({
       if (incoming.camera) state.camera = { ...DEFAULT_CAMERA_CONFIG, ...incoming.camera };
       if (incoming.telemetry) state.telemetry = { ...DEFAULT_TELEMETRY_CONFIG, ...incoming.telemetry };
       if (incoming.joystick) state.joystick = { ...DEFAULT_JOYSTICK_CONFIG, ...incoming.joystick };
-      if (incoming.ai) state.ai = { ...DEFAULT_AI_CONFIG, ...incoming.ai };
+      if (incoming.ai) {
+        const savedAi = incoming.ai as Partial<AiSettings>;
+        const usesLegacyDefaultVoice = (savedAi.voiceGender == null || savedAi.voiceGender === 'DEFAULT')
+          && (savedAi.voiceIdentifier == null)
+          && (savedAi.speechRate == null || savedAi.speechRate === 1)
+          && (savedAi.speechPitch == null || savedAi.speechPitch === 1)
+          && (savedAi.voiceStyle == null || savedAi.voiceStyle === 'COPILOT');
+        state.ai = { ...DEFAULT_AI_CONFIG, ...savedAi };
+        if (usesLegacyDefaultVoice) {
+          state.ai.voiceGender = 'MALE';
+          state.ai.speechRate = 0.9;
+          state.ai.speechPitch = 0.8;
+          state.ai.voiceIdentifier = null;
+          state.ai.voiceStyle = 'COPILOT';
+        }
+      }
+      if (incoming.aiFloatingPosition !== undefined) {
+        const position = incoming.aiFloatingPosition;
+        state.aiFloatingPosition = position
+          && Number.isFinite(position.xRatio)
+          && Number.isFinite(position.yRatio)
+          ? {
+              xRatio: Math.max(0, Math.min(1, position.xRatio)),
+              yRatio: Math.max(0, Math.min(1, position.yRatio)),
+            }
+          : null;
+      }
       state.hydrated = true;
     },
     markSettingsHydrated: (state) => {
@@ -211,6 +244,21 @@ export const settingsSlice = createSlice({
     toggleAiAssistant: (state) => {
       state.isAiAssistantOpen = !state.isAiAssistantOpen;
     },
+    setAiFloatingPosition: (state, action: PayloadAction<AniFloatingPosition>) => {
+      state.aiFloatingPosition = {
+        xRatio: Math.max(0, Math.min(1, action.payload.xRatio)),
+        yRatio: Math.max(0, Math.min(1, action.payload.yRatio)),
+      };
+    },
+    setAiMuted: (state, action: PayloadAction<boolean>) => {
+      state.ai.ttsMuted = action.payload;
+    },
+    toggleAiMute: (state) => {
+      state.ai.ttsMuted = !state.ai.ttsMuted;
+    },
+    setVoiceSendMode: (state, action: PayloadAction<'AUTO' | 'CONFIRM'>) => {
+      state.ai.voiceSendMode = action.payload;
+    },
   },
 });
 
@@ -247,6 +295,10 @@ export const {
   updateAiSettings,
   setAiAssistantOpen,
   toggleAiAssistant,
+  setAiFloatingPosition,
+  setAiMuted,
+  toggleAiMute,
+  setVoiceSendMode,
   markSettingsHydrated,
 } = settingsSlice.actions;
 
@@ -266,6 +318,9 @@ export const selectCameraSettings = (state: RootState) => state.settings.camera;
 export const selectTelemetrySettings = (state: RootState) => state.settings.telemetry;
 export const selectJoystickSettings = (state: RootState) => state.settings.joystick;
 export const selectAiSettings = (state: RootState) => state.settings.ai;
+export const selectAiTtsMuted = (state: RootState) => Boolean(state.settings.ai?.ttsMuted);
+export const selectVoiceSendMode = (state: RootState) => state.settings.ai?.voiceSendMode ?? 'AUTO';
 export const selectIsAiAssistantOpen = (state: RootState) => !!state.settings.isAiAssistantOpen;
+export const selectAiFloatingPosition = (state: RootState) => state.settings.aiFloatingPosition;
 
 export default settingsSlice.reducer;

@@ -5,13 +5,16 @@ import {
   Image, 
   Platform, 
   Pressable, 
+  StyleProp,
   StyleSheet, 
   Text, 
   TouchableOpacity, 
+  ViewStyle,
   View 
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassSurface } from '../gcs/GlassSurface';
 import { MAIN_NAV_ITEMS, MainRouteName, RootStackParamList } from '../../app/navigation/navigationConfig';
 import { glass, glassShadow, layers, radius } from '../../theme/gcsTheme';
@@ -21,7 +24,7 @@ type Props = {
   onNavigate: (route: MainRouteName) => void;
 };
 
-export function BrandLogoButton({ open, onPress }: { open: boolean; onPress: () => void }) {
+export function BrandLogoButton({ open, onPress, style }: { open: boolean; onPress: () => void; style?: StyleProp<ViewStyle> }) {
   const [imgError, setImgError] = React.useState(false);
 
   return (
@@ -32,7 +35,7 @@ export function BrandLogoButton({ open, onPress }: { open: boolean; onPress: () 
       activeOpacity={0.82}
       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       onPress={onPress}
-      style={[styles.logoButton, open && styles.logoButtonOpen]}
+      style={[styles.logoButton, style, open && styles.logoButtonOpen]}
     >
       <BlurView
         pointerEvents="none"
@@ -57,12 +60,18 @@ export function BrandLogoButton({ open, onPress }: { open: boolean; onPress: () 
   );
 }
 
-export function NavigationPopover({ currentRoute, progress, onNavigate }: Props & { progress: Animated.Value }) {
+export function NavigationPopover({
+  currentRoute,
+  progress,
+  onNavigate,
+  style,
+}: Props & { progress: Animated.Value; style?: StyleProp<ViewStyle> }) {
   return (
     <Animated.View
       pointerEvents="auto"
       style={[
-        styles.popoverWrap, 
+        styles.popoverWrap,
+        style,
         {
           opacity: progress,
           transform: [
@@ -112,8 +121,11 @@ export function NavigationPopover({ currentRoute, progress, onNavigate }: Props 
 }
 
 export function BrandMenu({ currentRoute, onNavigate }: Props) {
+  const insets = useSafeAreaInsets();
   const [open, setOpen] = React.useState(false);
   const progress = React.useRef(new Animated.Value(0)).current;
+  const left = insets.left - 45;
+  const top = insets.top + 4;
 
   const close = React.useCallback(() => setOpen(false), []);
   
@@ -160,9 +172,10 @@ export function BrandMenu({ currentRoute, onNavigate }: Props) {
           currentRoute={currentRoute} 
           onNavigate={navigate} 
           progress={progress} 
+          style={{ top: top + 60, left }}
         />
       ) : null}
-      <BrandLogoButton open={open} onPress={() => setOpen(value => !value)} />
+      <BrandLogoButton open={open} onPress={() => setOpen(value => !value)} style={{ top, left }} />
     </View>
   );
 }
@@ -181,9 +194,9 @@ const styles = StyleSheet.create({
     position: 'absolute', 
     top: 10, 
     left: 14, 
-    width: 44, 
-    height: 44, 
-    borderRadius: 22,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.32)', 
@@ -198,21 +211,21 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.46)',
   },
   logoImage: { 
-    width: 36, 
-    height: 36, 
-    borderRadius: 18,
+    width: 41,
+    height: 41,
+    borderRadius: 20.5,
   },
   fallbackLogo: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 41,
+    height: 41,
+    borderRadius: 20.5,
     backgroundColor: '#2586EA',
     alignItems: 'center',
     justifyContent: 'center',
   },
   fallbackText: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '900',
   },
   popoverWrap: { 

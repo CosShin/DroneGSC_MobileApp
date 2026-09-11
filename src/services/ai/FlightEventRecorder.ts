@@ -147,8 +147,8 @@ export class FlightEventRecorder {
   private observeConnection(snapshot: AniToolSnapshot) {
     const ctx = snapshot.flightContext;
     const connected = ctx.vehicle.connected;
-    const mavlinkLost = ctx.connection.mavlinkState === 'HEARTBEAT_LOST' || ctx.connection.vehicleState === 'STALE';
-    const degraded = !connected && ctx.connection.mavlinkState === 'ACTIVE';
+    const mavlinkLost = ctx.connection.mavlinkState === 'LOST' || ctx.connection.vehicleState === 'UNRESPONSIVE';
+    const degraded = !connected && ctx.connection.mavlinkState === 'HEARTBEAT_STALE';
 
     if (this.vehicleConnected && mavlinkLost) {
       this.push({

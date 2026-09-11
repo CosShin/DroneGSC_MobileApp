@@ -24,6 +24,14 @@ import { MavlinkSigningSession } from '../mavlink/MavlinkSigning';
 import { loadMavlinkSigningKey } from '../mavlink/MavlinkSigningKeyStore';
 import { precisionLandingAdvisor } from '../vision/PrecisionLandingAdvisor';
 import { createDevDiagnostics } from '../../utils/devDiagnostics';
+import { HeartbeatMonitor } from './HeartbeatMonitor';
+import { LinkQualityService } from './LinkQualityService';
+import { ReconnectPolicy } from './ReconnectPolicy';
+import {
+  emptyConnectionHealth,
+  type ConnectionHealthSnapshot,
+  type NetworkSnapshot,
+} from './ConnectionHealth';
 
 export type UniversalConnectionStatus = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
 export type NetworkState = 'DISCONNECTED' | 'BOUND' | 'ERROR';
@@ -157,6 +165,21 @@ export class UniversalConnectionService {
   private lastWatchdogTime = 0;
   private reconnectCount = 0;
   private reconnectAttemptStreak = 0;
+  private readonly heartbeatMonitor = new HeartbeatMonitor();
+  private readonly linkQualityService = new LinkQualityService();
+  private readonly reconnectPolicy = new ReconnectPolicy();
+  private health = emptyConnectionHealth();
+  private healthListeners = new Set<(health: ConnectionHealthSnapshot) => void>();
+  private networkSnapshot: NetworkSnapshot = {
+    isConnected: null,
+    isInternetReachable: null,
+    type: null,
+    changedAt: Date.now(),
+  };
+  private previousTraffic = { packetsRx: 0, packetsLost: 0 };
+  private packetLossPct: number | null = null;
+  private lastAckLatencyMs: number | null = null;
+  private lastHealthEmitAt = 0;
 
   constructor(
     manager = new MavlinkManager(),
@@ -200,7 +223,16 @@ export class UniversalConnectionService {
     };
     this.reconnectCount = 0;
     this.reconnectAttemptStreak = 0;
+    this.lastAckLatencyMs = null;
+    this.packetLossPct = null;
+    this.previousTraffic = { packetsRx: 0, packetsLost: 0 };
     this.clearReconnectTimer();
+    this.logger.write({
+      level: 'INFO',
+      category: 'TRANSPORT',
+      code: 'CONNECT',
+      message: `Connecting to ${this.activeConfig.type}`,
+    });
     return this.openConnection(this.activeConfig, false);
   }
 
@@ -282,6 +314,7 @@ export class UniversalConnectionService {
           : false;
     this.setStatus('CONNECTING');
     this.setLink({ network: 'DISCONNECTED', mavlink: 'WAITING_HEARTBEAT', vehicle: 'NO_VEHICLE', error: null });
+    this.refreshHealth(true);
     this.removers = [
       this.manager.onState(raw => this.updateFromMavlink(raw, config)),
       this.manager.onHeartbeat(timestamp => this.handleHeartbeat(timestamp)),
@@ -310,6 +343,7 @@ export class UniversalConnectionService {
       this.watchdog = setInterval(() => this.checkHeartbeat(), 250);
       this.logger.write({ level: 'INFO', category: 'TRANSPORT', code: 'TRANSPORT_READY', message: `${type} ready; waiting for HEARTBEAT` });
       devLog('transport-ready', { attempt, type, watchdog: Boolean(this.watchdog), reconnectEnabled: this.reconnectEnabled });
+      this.refreshHealth(true);
     } catch (error) {
       if (attempt !== this.connectAttempt || this.intentionalDisconnect) return;
       this.manager.disconnect();
@@ -319,6 +353,12 @@ export class UniversalConnectionService {
 
   disconnect() {
     devLog('disconnect-called', { status: this.status, reconnectCount: this.reconnectCount });
+    this.logger.write({
+      level: 'INFO',
+      category: 'TRANSPORT',
+      code: 'DISCONNECT',
+      message: 'Transport disconnected by user',
+    });
     this.intentionalDisconnect = true;
     this.activeConfig = null;
     this.connectAttempt++;
@@ -340,16 +380,21 @@ export class UniversalConnectionService {
     this.removers = [];
     this.manager.disconnect();
     this.lastHeartbeatAt = 0;
+    this.heartbeatMonitor.reset();
+    this.previousTraffic = { packetsRx: 0, packetsLost: 0 };
+    this.packetLossPct = null;
     this.state = emptyTelemetry();
     this.emitTelemetry();
     this.phaseMachine.close('Disconnected');
     this.setLink({ network: 'DISCONNECTED', mavlink: 'IDLE', vehicle: 'NO_VEHICLE', error: null });
     this.setStatus('DISCONNECTED');
+    this.refreshHealth(true);
   }
 
   getStatus() { return this.status; }
   getState() { return { ...this.state }; }
   getLinkState() { return { ...this.linkState }; }
+  getHealth() { return { ...this.health }; }
   getConnectionPhase() { return this.phaseMachine.getSnapshot(); }
   getDiagnostics() {
     return {
@@ -359,14 +404,21 @@ export class UniversalConnectionService {
       transport: this.manager.getTransportDiagnostics(),
       selectedTransport: this.activeConfig?.type ?? null,
       reconnectCount: this.reconnectCount,
+      health: this.getHealth(),
       vehicles: this.manager.getVehicles(),
       logs: this.logger.list(),
     };
   }
-  isVehicleFresh() { return this.status === 'CONNECTED' && !this.state.stale && this.lastHeartbeatAt > 0; }
+  isVehicleFresh() {
+    return this.status === 'CONNECTED'
+      && this.health.controlAvailable
+      && this.health.vehicleStatus === 'AVAILABLE'
+      && this.lastHeartbeatAt > 0;
+  }
   onTelemetry(listener: TelemetryListener) { this.telemetryListeners.add(listener); return () => this.telemetryListeners.delete(listener); }
   onStatusChange(listener: StatusListener) { this.statusListeners.add(listener); return () => this.statusListeners.delete(listener); }
   onLinkState(listener: (state: UniversalLinkState) => void) { this.linkListeners.add(listener); return () => this.linkListeners.delete(listener); }
+  onHealth(listener: (health: ConnectionHealthSnapshot) => void) { this.healthListeners.add(listener); return () => this.healthListeners.delete(listener); }
   onHeartbeat(listener: (timestamp: number) => void) { this.heartbeatListeners.add(listener); return () => this.heartbeatListeners.delete(listener); }
   onCommandAck(listener: (ack: MavlinkCommandAck) => void) { this.ackListeners.add(listener); return () => this.ackListeners.delete(listener); }
   onStatusText(listener: (message: MavlinkStatusText) => void) { this.statusTextListeners.add(listener); return () => this.statusTextListeners.delete(listener); }
@@ -374,14 +426,72 @@ export class UniversalConnectionService {
   getMavlinkTrafficDiagnostics(): MavlinkTrafficDiagnostics { return this.manager.getTrafficDiagnostics(); }
   getMavlinkSessionId() { return this.manager.getTrafficDiagnostics().sessionId; }
 
-  sendMavlinkCommand(command: number, params: number[] = []) {
+  async sendMavlinkCommand(command: number, params: number[] = []) {
     if (!this.isVehicleFresh()) return Promise.reject(new Error('NO_FRESH_VEHICLE'));
-    return this.manager.sendCommandLongAwaitAck(command, params);
+    const sentAt = Date.now();
+    this.logger.write({ level: 'INFO', category: 'COMMAND', code: 'COMMAND_SENT', message: `MAV_CMD ${command} sent` });
+    try {
+      const ack = await this.manager.sendCommandLongAwaitAck(command, params);
+      this.lastAckLatencyMs = Math.max(0, ack.receivedAt - sentAt);
+      this.logger.write({
+        level: 'INFO',
+        category: 'COMMAND',
+        code: 'COMMAND_ACK',
+        message: `MAV_CMD ${command} ACK ${ack.result}`,
+        context: { command, result: ack.result, latencyMs: this.lastAckLatencyMs },
+      });
+      this.refreshHealth(true);
+      return ack;
+    } catch (error) {
+      const code = error instanceof Error && error.message === 'COMMAND_TIMEOUT' ? 'COMMAND_TIMEOUT' : 'COMMAND_FAILED';
+      this.logger.write({ level: 'WARN', category: 'COMMAND', code, message: `MAV_CMD ${command} ${code.toLowerCase()}` });
+      throw error;
+    }
   }
   sendMavlinkMode(customMode: number) { return this.sendMavlinkCommand(176, [1, customMode]); }
-  sendPilotControl(input: FlightControlInput) {
+  sendPilotControl(input: FlightControlInput, options: { finalNeutral?: boolean } = {}) {
     if (!this.isVehicleFresh()) return Promise.reject(new Error('JOYSTICK_LINK_NOT_FRESH'));
-    return this.manager.sendManualControl(input);
+    return this.manager.sendManualControl(input, options);
+  }
+
+  setVideoAvailable(available: boolean) {
+    if (this.health.videoAvailable === available) return;
+    this.health = { ...this.health, videoAvailable: available, updatedAt: Date.now() };
+    this.emitHealth();
+  }
+
+  handleNetworkChange(snapshot: NetworkSnapshot, previous?: NetworkSnapshot) {
+    this.networkSnapshot = { ...snapshot };
+    const pathChanged = previous?.type != null && snapshot.type != null && previous.type !== snapshot.type;
+    if (snapshot.isConnected === false) {
+      this.logger.write({ level: 'WARN', category: 'LIFECYCLE', code: 'NETWORK_LOST', message: 'Device network unavailable' });
+      this.refreshHealth(true);
+      this.scheduleReconnect('Network unavailable');
+      return;
+    }
+    if ((previous?.isConnected === false || pathChanged) && this.activeConfig && !this.intentionalDisconnect) {
+      this.logger.write({
+        level: 'INFO',
+        category: 'LIFECYCLE',
+        code: pathChanged ? 'NETWORK_CHANGED' : 'NETWORK_RECOVERED',
+        message: pathChanged ? `Network path changed to ${snapshot.type ?? 'unknown'}` : 'Device network recovered',
+      });
+      this.reconnectNow(pathChanged ? 'Network path changed' : 'Network recovered');
+      return;
+    }
+    this.refreshHealth(true);
+  }
+
+  validateConnectionOnForeground() {
+    if (!this.activeConfig || this.intentionalDisconnect) return;
+    const transportReady = this.manager.getTransportDiagnostics()?.status === 'READY';
+    const heartbeat = this.heartbeatMonitor.getSnapshot();
+    if (!transportReady || heartbeat.health === 'CRITICAL' || heartbeat.health === 'LOST' || heartbeat.health === 'NO_HEARTBEAT') {
+      this.logger.write({ level: 'INFO', category: 'LIFECYCLE', code: 'FOREGROUND_REVALIDATE', message: 'Revalidating vehicle link after foreground' });
+      this.reconnectNow('Foreground validation');
+    } else {
+      this.refreshHealth(true);
+    }
   }
   uploadMission(items: MissionItemInt[], progress?: (value: number) => void) {
     if (!this.isVehicleFresh()) return Promise.reject(new Error('NO_FRESH_VEHICLE'));
@@ -407,6 +517,7 @@ export class UniversalConnectionService {
       this.clearReconnectTimer();
     }
     this.lastHeartbeatAt = this.now();
+    this.heartbeatMonitor.recordHeartbeat(timestamp);
     this.reconnectAttemptStreak = 0;
     this.state.lastHeartbeatAt = timestamp;
     this.state.stale = false;
@@ -422,6 +533,17 @@ export class UniversalConnectionService {
     }
     this.setLink({ network: 'BOUND', mavlink: 'ACTIVE', vehicle: 'CONNECTED', error: null });
     this.setStatus('CONNECTED');
+    this.manager.setTelemetryRatePolicy('FULL');
+    const prevMavlinkStatus = this.health.mavlinkStatus;
+    if (prevMavlinkStatus === 'HEARTBEAT_STALE' || prevMavlinkStatus === 'LOST') {
+      this.logger.write({
+        level: 'INFO',
+        category: 'MAVLINK',
+        code: 'HEARTBEAT_RECOVERED',
+        message: 'Vehicle heartbeat recovered',
+      });
+    }
+    this.refreshHealth(true);
     devLog('heartbeat-ok', {
       heartbeatAgeMs: Date.now() - timestamp,
       phase: this.phaseMachine.getSnapshot().phase,
@@ -481,12 +603,17 @@ export class UniversalConnectionService {
           ? Math.sin(raw.landingTargetAngleY) * raw.landingTargetDistanceM * 100
           : null,
         altitudeMeters: raw.landingTargetDistanceM,
-        confidence: 0.95,
+        confidence: null,
         timestamp: raw.landingTargetUpdatedAt,
       });
     } else {
       precisionLandingAdvisor.updateTargetState({
         targetFound: false,
+        tagId: null,
+        offsetXCentimeters: null,
+        offsetYCentimeters: null,
+        altitudeMeters: null,
+        confidence: null,
       });
     }
 
@@ -505,14 +632,35 @@ export class UniversalConnectionService {
     }
     this.lastWatchdogTime = current;
 
-    if (!this.lastHeartbeatAt || current - this.lastHeartbeatAt <= this.heartbeatTimeoutMs) return;
-    if (this.linkState.mavlink === 'HEARTBEAT_LOST') return;
-    devLog('heartbeat-lost', { ageMs: current - this.lastHeartbeatAt, timeoutMs: this.heartbeatTimeoutMs, phase: this.phaseMachine.getSnapshot().phase });
-    if (this.phaseMachine.getSnapshot().phase === 'LINK_ACTIVE') this.transition('DEGRADED', 'Heartbeat timeout');
-    this.logger.write({ level: 'WARN', category: 'MAVLINK', code: 'HEARTBEAT_LOST', message: 'Vehicle heartbeat timed out' });
+    const previousHealth = this.health.mavlinkStatus;
+    const heartbeat = this.heartbeatMonitor.getSnapshot(Date.now());
+    this.refreshHealth();
+    if (heartbeat.health === 'NO_HEARTBEAT' || heartbeat.health === 'HEALTHY') return;
+
+    if (heartbeat.health === 'DEGRADED') {
+      if (this.phaseMachine.getSnapshot().phase === 'LINK_ACTIVE') this.transition('DEGRADED', 'Heartbeat delayed');
+      this.manager.setTelemetryRatePolicy('DEGRADED');
+      if (previousHealth !== 'HEARTBEAT_STALE') {
+        this.logger.write({ level: 'WARN', category: 'MAVLINK', code: 'LINK_DEGRADED', message: 'Vehicle heartbeat delayed' });
+      }
+      return;
+    }
+
     this.state.stale = true;
     this.emitTelemetry();
-    this.setLink({ network: 'BOUND', mavlink: 'HEARTBEAT_LOST', vehicle: 'STALE', error: 'HEARTBEAT_LOST' });
+    this.manager.setTelemetryRatePolicy('ESSENTIAL');
+    this.setLink({ network: 'BOUND', mavlink: 'HEARTBEAT_LOST', vehicle: 'STALE', error: 'HEARTBEAT_STALE' });
+    if (heartbeat.health === 'CRITICAL') {
+      if (previousHealth !== 'HEARTBEAT_STALE') {
+        this.logger.write({ level: 'WARN', category: 'MAVLINK', code: 'LINK_CRITICAL', message: 'Vehicle heartbeat critically delayed' });
+      }
+      return;
+    }
+
+    if (previousHealth !== 'LOST') {
+      devLog('heartbeat-lost', { ageMs: heartbeat.heartbeatAgeMs, timeoutMs: this.heartbeatTimeoutMs, phase: this.phaseMachine.getSnapshot().phase });
+      this.logger.write({ level: 'ERROR', category: 'MAVLINK', code: 'HEARTBEAT_LOST', message: 'Vehicle heartbeat timed out' });
+    }
     this.scheduleReconnect('Heartbeat timeout');
   }
 
@@ -533,8 +681,16 @@ export class UniversalConnectionService {
     const phase = this.phaseMachine.getSnapshot().phase;
     if (phase === 'ERROR' || phase === 'DEGRADED') this.transition('RECONNECTING', reason);
     this.setStatus('CONNECTING');
+    this.refreshHealth(true);
+    if (this.networkSnapshot.isConnected === false) return;
     const config = this.activeConfig;
-    const delayMs = Math.min(this.reconnectDelayMs * (2 ** this.reconnectAttemptStreak), 30_000);
+    const delayMs = this.reconnectPolicy.delayForAttempt(this.reconnectAttemptStreak, this.reconnectDelayMs);
+    this.logger.write({
+      level: 'INFO',
+      category: 'TRANSPORT',
+      code: 'RECONNECT',
+      message: `Scheduling reconnect in ${delayMs}ms: ${reason} (attempt ${this.reconnectAttemptStreak + 1})`,
+    });
     devLog('schedule-reconnect', { reason, delayMs, reconnectAttemptStreak: this.reconnectAttemptStreak, reconnectCount: this.reconnectCount });
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -546,10 +702,150 @@ export class UniversalConnectionService {
     }, delayMs);
   }
 
+  private reconnectNow(reason: string) {
+    if (this.intentionalDisconnect || !this.activeConfig || !this.reconnectEnabled) return;
+    if (this.networkSnapshot.isConnected === false) {
+      this.scheduleReconnect(reason);
+      return;
+    }
+    this.clearReconnectTimer();
+    const phase = this.phaseMachine.getSnapshot().phase;
+    if (phase === 'LINK_ACTIVE' || phase === 'DEGRADED' || phase === 'ERROR' || phase === 'WAITING_HEARTBEAT') {
+      this.transition('RECONNECTING', reason);
+    }
+    this.reconnectCount++;
+    this.reconnectAttemptStreak++;
+    this.logger.write({
+      level: 'INFO',
+      category: 'TRANSPORT',
+      code: 'RECONNECT',
+      message: `Reconnecting immediately: ${reason} (streak ${this.reconnectAttemptStreak})`,
+    });
+    this.setStatus('CONNECTING');
+    this.refreshHealth(true);
+    void this.openConnection(this.activeConfig, true);
+  }
+
   private clearReconnectTimer() {
     if (this.reconnectTimer) devLog('clear-reconnect-timer', { reconnectCount: this.reconnectCount });
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+  }
+
+  private refreshHealth(force = false) {
+    const now = Date.now();
+    if (!force && now - this.lastHealthEmitAt < 250) return;
+    const heartbeat = this.heartbeatMonitor.getSnapshot(now);
+    const traffic = this.manager.getTrafficDiagnostics();
+    const packetDelta = traffic.packetsRx - this.previousTraffic.packetsRx;
+    const lossDelta = traffic.packetsLost - this.previousTraffic.packetsLost;
+    if (packetDelta > 0 || lossDelta > 0) {
+      this.packetLossPct = Math.max(0, Math.min(100, (lossDelta / Math.max(1, packetDelta + lossDelta)) * 100));
+      this.previousTraffic = { packetsRx: traffic.packetsRx, packetsLost: traffic.packetsLost };
+    }
+    const transport = this.manager.getTransportDiagnostics();
+    const transportConnected = transport?.status === 'READY';
+    const quality = this.linkQualityService.calculate({
+      transportConnected,
+      heartbeat,
+      packetLossPct: this.packetLossPct,
+      ackLatencyMs: this.lastAckLatencyMs,
+      rttMs: null,
+    });
+    const phase = this.phaseMachine.getSnapshot().phase;
+    const networkStatus = this.networkSnapshot.isConnected === false
+      ? 'DISCONNECTED'
+      : phase === 'RECONNECTING'
+        ? 'RECONNECTING'
+        : this.status === 'CONNECTING'
+          ? 'CONNECTING'
+          : transportConnected
+            ? (quality.quality === 'POOR' || quality.quality === 'CRITICAL' && heartbeat.health !== 'NO_HEARTBEAT' ? 'DEGRADED' : 'CONNECTED')
+            : 'DISCONNECTED';
+    const mavlinkStatus = !transportConnected
+      ? 'NO_HEARTBEAT'
+      : heartbeat.health === 'NO_HEARTBEAT'
+        ? 'WAITING'
+        : heartbeat.health === 'HEALTHY'
+          ? 'HEARTBEAT_OK'
+          : heartbeat.health === 'LOST'
+            ? 'LOST'
+            : 'HEARTBEAT_STALE';
+    const vehicleStatus = heartbeat.health === 'NO_HEARTBEAT'
+      ? 'NO_VEHICLE'
+      : heartbeat.health === 'CRITICAL' || heartbeat.health === 'LOST'
+        ? 'UNRESPONSIVE'
+        : 'AVAILABLE';
+    const controlStatus = heartbeat.health === 'HEALTHY'
+      ? 'READY'
+      : heartbeat.health === 'DEGRADED'
+        ? 'DEGRADED'
+        : heartbeat.health === 'CRITICAL' || heartbeat.health === 'LOST'
+          ? 'LOST'
+          : 'DISABLED';
+    const next: ConnectionHealthSnapshot = {
+      networkStatus,
+      mavlinkStatus,
+      vehicleStatus,
+      controlStatus,
+      linkQuality: quality.quality,
+      linkQualityScore: quality.score,
+      rttMs: null,
+      jitterMs: heartbeat.jitterMs,
+      packetLossPct: this.packetLossPct,
+      lastHeartbeatAt: heartbeat.lastHeartbeatAt,
+      heartbeatAgeMs: heartbeat.heartbeatAgeMs,
+      heartbeatIntervalMs: heartbeat.heartbeatIntervalMs,
+      missedHeartbeatCount: heartbeat.missedHeartbeatCount,
+      lastAckLatencyMs: this.lastAckLatencyMs,
+      reconnectCount: this.reconnectCount,
+      transport: transport?.kind ?? null,
+      transportStatus: transport?.status ?? null,
+      rxPacketsPerSec: traffic.rxPacketsPerSec,
+      txPacketsPerSec: traffic.txPacketsPerSec,
+      controlAvailable: controlStatus === 'READY' || controlStatus === 'DEGRADED',
+      videoAvailable: this.health.videoAvailable,
+      videoQualityPolicy: quality.videoPolicy,
+      networkType: this.networkSnapshot.type,
+      internetReachable: this.networkSnapshot.isInternetReachable,
+      updatedAt: now,
+    };
+    const statusChanged = next.controlStatus !== this.health.controlStatus || next.linkQuality !== this.health.linkQuality;
+    const prevControl = this.health.controlAvailable;
+    const nextControl = next.controlAvailable;
+    if (!prevControl && nextControl) {
+      this.logger.write({
+        level: 'INFO',
+        category: 'VEHICLE',
+        code: 'CONTROL_ENABLED',
+        message: `Control link enabled (${next.controlStatus})`,
+      });
+    } else if (prevControl && !nextControl) {
+      this.logger.write({
+        level: 'WARN',
+        category: 'VEHICLE',
+        code: 'CONTROL_DISABLED',
+        message: `Control link disabled (${next.controlStatus})`,
+      });
+    }
+    this.health = next;
+    this.lastHealthEmitAt = now;
+    this.emitHealth();
+    if (statusChanged) {
+      devLog('health', {
+        network: next.networkStatus,
+        mavlink: next.mavlinkStatus,
+        vehicle: next.vehicleStatus,
+        control: next.controlStatus,
+        quality: next.linkQuality,
+        score: next.linkQualityScore,
+      });
+    }
+  }
+
+  private emitHealth() {
+    const snapshot = this.getHealth();
+    this.healthListeners.forEach(listener => listener(snapshot));
   }
 
   private withTimeout<T>(promise: Promise<T>, timeoutMs: number, code: string) {

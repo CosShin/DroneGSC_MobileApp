@@ -1,4 +1,14 @@
 import type { SpeechVoice, TtsOptions } from './AiSpeechService';
+import { AniSpeechQueue, type QueueSegmentItem } from './AniSpeechQueue';
+
+function isIOSPlatform(): boolean {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('react-native')?.Platform?.OS === 'ios';
+  } catch {
+    return false;
+  }
+}
 
 export type VoiceProviderName = 'SYSTEM_TTS' | 'ELEVENLABS';
 export type VoiceProviderState = 'READY' | 'UNCONFIGURED' | 'SPEAKING' | 'FALLBACK' | 'ERROR';
@@ -40,9 +50,12 @@ export type NeuralAudioPlayback = (audio: ArrayBuffer, metadata: {
 
 export interface ISpeechProvider {
   speak(text: string, options: TtsOptions): Promise<void>;
+  speakSegments?(segments: QueueSegmentItem[]): Promise<void>;
   stop(): Promise<void>;
   isSpeaking(): boolean;
   getAvailableVoices(filterLang?: string): Promise<SpeechVoice[]>;
+  autoSelectVoices?(): Promise<{ vi: string | null; en: string | null }>;
+  getAutoSelectedVoices?(): { vi: string | null; en: string | null };
   isAvailable?(): boolean;
   getStatus?(): VoiceProviderStatus;
 }
@@ -69,9 +82,82 @@ function getNativeSpeechModule(): any {
 export class SystemSpeechProvider implements ISpeechProvider {
   private _isSpeaking = false;
   private onStateChange?: (speaking: boolean) => void;
+  private speechQueue: AniSpeechQueue;
+  private autoSelectedViVoice: string | null = null;
+  private autoSelectedEnVoice: string | null = null;
 
   constructor(onStateChange?: (speaking: boolean) => void) {
     this.onStateChange = onStateChange;
+    this.speechQueue = new AniSpeechQueue(
+      (text, opts) => {
+        const Speech = getNativeSpeechModule();
+        if (Speech && typeof Speech.speak === 'function') {
+          try {
+            const speakOptions: any = {
+              language: opts.language,
+              voice: opts.voice || undefined,
+              rate: opts.rate ?? 0.95,
+              pitch: opts.pitch ?? 1.0,
+              volume: opts.volume ?? 1.0,
+              onStart: opts.onStart,
+              onDone: opts.onDone,
+              onStopped: opts.onStopped,
+              onError: (error?: any) => {
+                console.warn('[SystemSpeechProvider] Segment error:', error);
+                // Safe fallback if custom voice or specific language code failed
+                if (opts.voice) {
+                  try {
+                    const retryOptions: any = {
+                      language: opts.language,
+                      rate: opts.rate ?? 0.95,
+                      pitch: opts.pitch ?? 1.0,
+                      volume: opts.volume ?? 1.0,
+                      onStart: opts.onStart,
+                      onDone: opts.onDone,
+                      onStopped: opts.onStopped,
+                      onError: opts.onError,
+                    };
+                    if (isIOSPlatform()) {
+                      retryOptions.useApplicationAudioSession = false;
+                    }
+                    Speech.speak(text, retryOptions);
+                    return;
+                  } catch (retryErr) {
+                    console.warn('[SystemSpeechProvider] Retry error:', retryErr);
+                  }
+                }
+                opts.onError?.(error);
+              },
+            };
+
+            if (isIOSPlatform()) {
+              speakOptions.useApplicationAudioSession = false;
+            }
+
+            Speech.speak(text, speakOptions);
+          } catch (err) {
+            console.warn('[SystemSpeechProvider] Speech.speak threw:', err);
+            opts.onError?.(err);
+          }
+        } else {
+          opts.onError?.();
+        }
+      },
+      async () => {
+        const Speech = getNativeSpeechModule();
+        try {
+          if (Speech && typeof Speech.stop === 'function') {
+            await Speech.stop();
+          }
+        } catch {
+          // Ignore stop error
+        }
+      }
+    );
+
+    this.speechQueue.subscribe((speaking) => {
+      this.setSpeaking(speaking);
+    });
   }
 
   isSpeaking(): boolean {
@@ -124,6 +210,30 @@ export class SystemSpeechProvider implements ISpeechProvider {
     }
   }
 
+  async autoSelectVoices(): Promise<{ vi: string | null; en: string | null }> {
+    const voices = await this.getAvailableVoices();
+    const viVoices = voices.filter(v => (v.language || '').toLowerCase().replace('_', '-').startsWith('vi'));
+    const bestVi = viVoices.find(v => v.quality === 'Enhanced') || viVoices[0] || null;
+
+    const enVoices = voices.filter(v => (v.language || '').toLowerCase().replace('_', '-').startsWith('en'));
+    const bestEn = enVoices.find(v => v.quality === 'Enhanced') || enVoices[0] || null;
+
+    this.autoSelectedViVoice = bestVi ? bestVi.identifier : null;
+    this.autoSelectedEnVoice = bestEn ? bestEn.identifier : null;
+
+    return {
+      vi: this.autoSelectedViVoice,
+      en: this.autoSelectedEnVoice,
+    };
+  }
+
+  getAutoSelectedVoices(): { vi: string | null; en: string | null } {
+    return {
+      vi: this.autoSelectedViVoice,
+      en: this.autoSelectedEnVoice,
+    };
+  }
+
   isAvailable(): boolean {
     const Speech = getNativeSpeechModule();
     return !!Speech && typeof Speech.speak === 'function';
@@ -138,62 +248,26 @@ export class SystemSpeechProvider implements ISpeechProvider {
   }
 
   async speak(text: string, options: TtsOptions): Promise<void> {
-    const Speech = getNativeSpeechModule();
-    if (!Speech || typeof Speech.speak !== 'function') {
-      this.setSpeaking(false);
-      return;
-    }
+    const lang = (options.language || 'vi-VN') as 'vi-VN' | 'en-US';
+    await this.speakSegments([{
+      text,
+      lang: lang === 'en-US' ? 'en-US' : 'vi-VN',
+      voice: options.voice,
+      rate: options.rate,
+      pitch: options.pitch,
+      volume: options.volume ?? 1.0,
+    }]);
+  }
 
-    this.setSpeaking(true);
-
-    const speakOptions: any = {
-      language: options.language || 'vi-VN',
-      rate: options.rate ?? 1.0,
-      pitch: options.pitch ?? 1.0,
-      onDone: () => {
-        this.setSpeaking(false);
-      },
-      onStopped: () => {
-        this.setSpeaking(false);
-      },
-      onError: () => {
-        this.setSpeaking(false);
-      },
-    };
-
-    if (options.voice) {
-      speakOptions.voice = options.voice;
-    }
-
-    try {
-      Speech.speak(text, speakOptions);
-    } catch {
-      if (speakOptions.voice) {
-        try {
-          delete speakOptions.voice;
-          Speech.speak(text, speakOptions);
-          return;
-        } catch {
-          // Ignore
-        }
-      }
-      this.setSpeaking(false);
-    }
+  async speakSegments(segments: QueueSegmentItem[]): Promise<void> {
+    await this.speechQueue.play(segments);
   }
 
   async stop(): Promise<void> {
-    const Speech = getNativeSpeechModule();
-    try {
-      if (Speech && typeof Speech.stop === 'function') {
-        await Speech.stop();
-      }
-    } catch {
-      // Ignore stop error
-    } finally {
-      this.setSpeaking(false);
-    }
+    await this.speechQueue.stop();
   }
 }
+
 
 export class ElevenLabsVoiceProvider implements ISpeechProvider {
   private config: Required<Pick<NeuralVoiceConfig, 'provider'>> & Omit<NeuralVoiceConfig, 'provider'>;
@@ -388,6 +462,61 @@ export class FallbackSpeechProvider implements ISpeechProvider {
     }
 
     await this.fallback.speak(text, options);
+  }
+
+  async speakSegments(segments: QueueSegmentItem[]): Promise<void> {
+    const primaryAvailable = this.primary.isAvailable?.() ?? true;
+    if (primaryAvailable && this.primary.speakSegments) {
+      try {
+        await this.primary.speakSegments(segments);
+        this.lastStatus = {
+          provider: this.primary.getStatus?.().provider ?? 'ELEVENLABS',
+          state: 'READY',
+          lastError: null,
+        };
+        return;
+      } catch (error) {
+        this.lastStatus = {
+          provider: 'SYSTEM_TTS',
+          state: 'FALLBACK',
+          lastError: error instanceof Error ? error.message : 'NEURAL_TTS_ERROR',
+          fallbackProvider: 'SYSTEM_TTS',
+        };
+      }
+    }
+
+    if (this.fallback.speakSegments) {
+      await this.fallback.speakSegments(segments);
+    } else {
+      for (const seg of segments) {
+        await this.fallback.speak(seg.text, {
+          language: seg.lang,
+          voice: seg.voice,
+          rate: seg.rate,
+          pitch: seg.pitch,
+        });
+      }
+    }
+  }
+
+  async autoSelectVoices(): Promise<{ vi: string | null; en: string | null }> {
+    if (this.fallback.autoSelectVoices) {
+      return this.fallback.autoSelectVoices();
+    }
+    if (this.primary.autoSelectVoices) {
+      return this.primary.autoSelectVoices();
+    }
+    return { vi: null, en: null };
+  }
+
+  getAutoSelectedVoices(): { vi: string | null; en: string | null } {
+    if (this.fallback.getAutoSelectedVoices) {
+      return this.fallback.getAutoSelectedVoices();
+    }
+    if (this.primary.getAutoSelectedVoices) {
+      return this.primary.getAutoSelectedVoices();
+    }
+    return { vi: null, en: null };
   }
 
   async stop(): Promise<void> {

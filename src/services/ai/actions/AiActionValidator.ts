@@ -1,5 +1,6 @@
 import type { RootState } from '../../../store';
 import { AppConfig } from '../../../config';
+import { FRESHNESS_THRESHOLDS } from '../../../config/TelemetryFreshness';
 import { isValidCoordinate } from '../../../utils/geographic';
 import type { AiActionProposal } from '../intents/AiIntentTypes';
 
@@ -16,7 +17,7 @@ export class AiActionValidator {
     const { connection, drone, telemetry, command: commandState } = state;
 
     // 1. Connection check
-    if (connection.status !== 'CONNECTED' || connection.vehicleState !== 'CONNECTED') {
+    if (connection.status !== 'CONNECTED' || !connection.controlAvailable || connection.vehicleStatus !== 'AVAILABLE') {
       return 'NO_FRESH_VEHICLE_CONNECTED';
     }
 
@@ -27,7 +28,7 @@ export class AiActionValidator {
 
     // 3. Telemetry freshness check
     const now = Date.now();
-    if (!connection.lastHeartbeat || now - connection.lastHeartbeat > AppConfig.CONNECTION_TIMEOUT) {
+    if (!connection.lastHeartbeatAt || now - connection.lastHeartbeatAt > AppConfig.CONNECTION_TIMEOUT) {
       return 'HEARTBEAT_STALE_OR_TIMEOUT';
     }
     if (telemetry.stale || drone.stale) {
@@ -54,7 +55,7 @@ export class AiActionValidator {
         if (!telemetry.gps || !Number.isFinite(telemetry.gps.value.altitude)) {
           return 'DISARM_REQUIRES_VALID_ALTITUDE';
         }
-        if (now - telemetry.gps.timestamp > AppConfig.TELEMETRY_TIMEOUT) {
+        if (now - telemetry.gps.timestamp > FRESHNESS_THRESHOLDS.GPS_MS) {
           return 'ALTITUDE_TELEMETRY_STALE';
         }
         if (telemetry.gps.value.altitude > 1.0) {
@@ -84,7 +85,7 @@ export class AiActionValidator {
       }
 
       case 'RTL': {
-        if (!telemetry.gps || now - telemetry.gps.timestamp > AppConfig.TELEMETRY_TIMEOUT) {
+        if (!telemetry.gps || now - telemetry.gps.timestamp > FRESHNESS_THRESHOLDS.GPS_MS) {
           return 'GPS_TELEMETRY_STALE';
         }
         if (telemetry.gps.value.gpsFix === null || telemetry.gps.value.gpsFix < 3) {

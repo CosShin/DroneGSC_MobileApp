@@ -81,15 +81,21 @@ export interface NormalizedConnectionState {
 }
 
 export interface NormalizedBatteryState {
+  available?: boolean;
   voltage: number | null;
   current: number | null;
   percentage: number | null;
+  remainingPercent?: number | null;
 }
 
 export interface NormalizedGpsState {
+  available?: boolean;
+  fix?: boolean;
   fixType: number | null;
+  fixDescription?: string;
   satellites: number | null;
   hdop: number | null;
+  vdop?: number | null;
   latitude: number | null;
   longitude: number | null;
   altitude: number | null;
@@ -168,6 +174,9 @@ export interface FlightContextSnapshot {
   warnings: string[];
   mission: NormalizedMissionSummary | null;
   precisionLanding?: NormalizedPrecisionLandingState | null;
+  ekf?: { available: boolean; healthy: boolean | null; message?: string };
+  opticalFlow?: { available: boolean; quality?: number | null };
+  rangefinder?: { available: boolean; distance?: number | null };
 }
 
 export type AiQuickActionType = 

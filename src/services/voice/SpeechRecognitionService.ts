@@ -1,3 +1,12 @@
+function isIOSPlatform(): boolean {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('react-native')?.Platform?.OS === 'ios';
+  } catch {
+    return false;
+  }
+}
+
 export type SpeechRecognitionStatus = 
   | 'IDLE' 
   | 'REQUESTING_PERMISSION' 
@@ -18,6 +27,7 @@ export interface SpeechRecognitionState {
   errorCode: SpeechErrorCode | null;
   errorMessage: string | null;
   isRecognizing: boolean;
+  confidence: number | null;
 }
 
 export interface SpeechStartOptions {
@@ -50,6 +60,7 @@ export class SpeechRecognitionService {
   private status: SpeechRecognitionStatus = 'IDLE';
   private transcript = '';
   private interimTranscript = '';
+  private confidence: number | null = null;
   private errorCode: SpeechErrorCode | null = null;
   private errorMessage: string | null = null;
   private listeners = new Set<(state: SpeechRecognitionState) => void>();
@@ -64,6 +75,7 @@ export class SpeechRecognitionService {
       errorCode: this.errorCode,
       errorMessage: this.errorMessage,
       isRecognizing: this.status === 'LISTENING',
+      confidence: this.confidence,
     };
   }
 
@@ -130,6 +142,32 @@ export class SpeechRecognitionService {
     }
   }
 
+  private async resetAudioSessionToPlayback(): Promise<void> {
+    const mod = getNativeSpeechModule();
+    if (isIOSPlatform() && mod) {
+      try {
+        if (typeof mod.setCategoryIOS === 'function') {
+          await mod.setCategoryIOS({
+            category: 'playback',
+            categoryOptions: ['duckOthers', 'defaultToSpeaker'],
+            mode: 'default',
+          });
+          console.log('[SpeechRecognitionService] iOS audio session set to playback');
+        }
+      } catch (err) {
+        console.warn('[SpeechRecognitionService] Failed to set playback category:', err);
+      }
+      try {
+        if (typeof mod.setAudioSessionActiveIOS === 'function') {
+          await mod.setAudioSessionActiveIOS(false, { notifyOthersOnDeactivation: true });
+          console.log('[SpeechRecognitionService] iOS audio session deactivated');
+        }
+      } catch (err) {
+        console.warn('[SpeechRecognitionService] Failed to deactivate audio session:', err);
+      }
+    }
+  }
+
   async startListening(options: SpeechStartOptions = {}): Promise<void> {
     const mod = getNativeSpeechModule();
     if (!mod || typeof mod.start !== 'function') {
@@ -140,6 +178,15 @@ export class SpeechRecognitionService {
       return;
     }
 
+    // Stop any existing TTS playback immediately before opening microphone
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { aiSpeechService } = require('./AiSpeechService');
+      await aiSpeechService.stop();
+    } catch {
+      // Ignore
+    }
+
     // Verify permission first
     const hasPerm = await this.requestPermissions();
     if (!hasPerm) return;
@@ -147,6 +194,7 @@ export class SpeechRecognitionService {
     this.cleanupNativeListeners();
     this.transcript = '';
     this.interimTranscript = '';
+    this.confidence = null;
     this.errorCode = null;
     this.errorMessage = null;
     this.status = 'LISTENING';
@@ -157,7 +205,10 @@ export class SpeechRecognitionService {
       if (typeof mod.addListener === 'function') {
         const resultSub = mod.addListener('result', (event: any) => {
           const results = event?.results ?? [];
-          const best = results[0]?.transcript ?? '';
+          const firstResult = results[0];
+          const best = firstResult?.transcript ?? '';
+          const conf = typeof firstResult?.confidence === 'number' ? firstResult.confidence : null;
+          this.confidence = conf;
           if (event?.isFinal) {
             this.transcript = best;
             this.interimTranscript = '';
@@ -169,25 +220,33 @@ export class SpeechRecognitionService {
 
         const errorSub = mod.addListener('error', (event: any) => {
           this.status = 'ERROR';
+          this.confidence = null;
           this.errorCode = 'RECOGNITION_ERROR';
           this.errorMessage = event?.message || 'Speech recognition encountered an error.';
+          void this.resetAudioSessionToPlayback();
           this.cleanupNativeListeners();
           this.emit();
           if (this.stopPromiseResolve) {
-            this.stopPromiseResolve(this.transcript);
+            const cb = this.stopPromiseResolve;
             this.stopPromiseResolve = null;
+            cb(this.transcript);
           }
         });
 
         const endSub = mod.addListener('end', () => {
-          if (this.status === 'LISTENING') {
+          void this.resetAudioSessionToPlayback();
+          if (this.status === 'LISTENING' || this.status === 'PROCESSING') {
+            const pendingResolve = this.stopPromiseResolve;
+            this.stopPromiseResolve = null;
+            const finalText = (this.transcript || this.interimTranscript).trim();
+            if (pendingResolve) {
+              this.cleanupNativeListeners();
+              pendingResolve(finalText);
+              return;
+            }
             this.status = 'IDLE';
             this.cleanupNativeListeners();
             this.emit();
-            if (this.stopPromiseResolve) {
-              this.stopPromiseResolve(this.transcript);
-              this.stopPromiseResolve = null;
-            }
           }
         });
 
@@ -204,6 +263,7 @@ export class SpeechRecognitionService {
       this.status = 'ERROR';
       this.errorCode = 'RECOGNITION_ERROR';
       this.errorMessage = error instanceof Error ? error.message : 'Failed to start speech recognition.';
+      void this.resetAudioSessionToPlayback();
       this.cleanupNativeListeners();
       this.emit();
     }
@@ -220,12 +280,13 @@ export class SpeechRecognitionService {
     const mod = getNativeSpeechModule();
 
     return new Promise<string>(resolve => {
-      this.stopPromiseResolve = (finalText: string) => {
+      this.stopPromiseResolve = async (finalText: string) => {
         const text = (finalText || this.transcript || this.interimTranscript).trim();
+        await this.resetAudioSessionToPlayback();
         this.status = 'IDLE';
         if (!text) {
           this.errorCode = 'NO_SPEECH_DETECTED';
-          this.errorMessage = 'No speech detected. Please hold the button and speak into your microphone.';
+          this.errorMessage = 'No speech detected. Tap the microphone and speak again.';
         }
         this.emit();
         resolve(text);
@@ -246,7 +307,7 @@ export class SpeechRecognitionService {
           this.cleanupNativeListeners();
           const cb = this.stopPromiseResolve;
           this.stopPromiseResolve = null;
-          cb(fallbackText);
+          void cb(fallbackText);
         }
       }, 2500);
     });
@@ -261,9 +322,12 @@ export class SpeechRecognitionService {
     } catch {
       // Ignore abort error
     }
+    void this.resetAudioSessionToPlayback();
     this.cleanupNativeListeners();
     this.status = 'IDLE';
+    this.transcript = '';
     this.interimTranscript = '';
+    this.confidence = null;
     this.errorCode = null;
     this.errorMessage = null;
     if (this.stopPromiseResolve) {

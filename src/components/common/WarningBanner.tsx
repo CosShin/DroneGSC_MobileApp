@@ -2,16 +2,26 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppSelector } from '../../store/hooks';
-import { selectConnectionStatus } from '../../store/connection/connectionSlice';
+import {
+  selectConnectionStatus,
+  selectControlStatus,
+  selectLinkQuality,
+  selectMavlinkStatus,
+} from '../../store/connection/connectionSlice';
 import { selectBattery, selectGps, selectStatusTexts, selectTelemetryStale } from '../../store/telemetry/telemetrySlice';
 import { selectHomeTransaction } from '../../store/home/homeSlice';
-import { isTelemetryStale } from '../../utils/telemetry';
+import { isGpsStale } from '../../utils/telemetry';
 import { AppConfig } from '../../config';
 import { glassShadow, layers, radius } from '../../theme/gcsTheme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export function WarningBanner() {
+  const insets = useSafeAreaInsets();
   const homeTransaction = useAppSelector(selectHomeTransaction);
   const status = useAppSelector(selectConnectionStatus);
+  const mavlinkStatus = useAppSelector(selectMavlinkStatus);
+  const controlStatus = useAppSelector(selectControlStatus);
+  const linkQuality = useAppSelector(selectLinkQuality);
   const gps = useAppSelector(selectGps);
   const stale = useAppSelector(selectTelemetryStale);
   const messages = useAppSelector(selectStatusTexts);
@@ -20,10 +30,14 @@ export function WarningBanner() {
   if (homeTransaction.status === 'CONFIRMING') return null;
   
   const warnings: string[] = [];
-  if (status === 'ERROR') warnings.push('PreArm: Link error - check gateway');
+  if (mavlinkStatus === 'LOST') warnings.push('VEHICLE CONNECTION LOST');
+  else if (controlStatus === 'LOST' || linkQuality === 'CRITICAL') warnings.push('CRITICAL LINK - Control unavailable');
+  else if (controlStatus === 'DEGRADED' || linkQuality === 'DEGRADED' || linkQuality === 'POOR') {
+    warnings.push('NETWORK DEGRADED - Control limited, video may be reduced');
+  } else if (status === 'ERROR') warnings.push('PreArm: Link error - check gateway');
   else if (status === 'CONNECTED' && stale) warnings.push('PreArm: Heartbeat lost - vehicle unreachable');
   else if (status === 'CONNECTED' && !gps) warnings.push('PreArm: Need 3D GPS Fix');
-  else if (gps && isTelemetryStale(gps.timestamp)) warnings.push('PreArm: GPS telemetry stale');
+  else if (gps && isGpsStale(gps.timestamp)) warnings.push('PreArm: GPS telemetry stale');
   
   const autopilot = messages.find(message => message.severity <= 4 && Date.now() - message.timestamp < 15_000);
   if (autopilot) warnings.push(autopilot.text);
@@ -35,7 +49,7 @@ export function WarningBanner() {
   if (!warnings.length) return null;
 
   return (
-    <View pointerEvents="none" style={styles.container}>
+    <View pointerEvents="none" style={[styles.container, { top: insets.top + 48 }]}>
       <View style={styles.card}>
         <MaterialCommunityIcons name="alert-outline" size={13} color="#DC2626" />
         <Text numberOfLines={1} style={styles.text}>

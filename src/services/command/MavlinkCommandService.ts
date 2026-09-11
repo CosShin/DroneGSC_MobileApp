@@ -2,6 +2,7 @@ import { universalConnectionService } from '../connection/UniversalConnectionSer
 import { CommandExecutionStatus, CommandResult, DroneCommand, FlightMode } from '../../types/command';
 import { CommandService } from './CommandService';
 import { buildSetHomeCommandParams } from '../home/HomeProtocol';
+import { getRetryPolicy, isRetryAllowed } from './CommandRetryPolicy';
 
 const COPTER_MODE: Record<FlightMode, number> = {
   STABILIZE: 0, ALT_HOLD: 2, LOITER: 5, POSHOLD: 16,
@@ -43,33 +44,49 @@ export class MavlinkCommandService implements CommandService {
   }
 
   private async command(command: DroneCommand['type'], mavCommand: number, params: number[] = []) {
-    const sentAt = Date.now();
-    try {
-      const ack = await universalConnectionService.sendMavlinkCommand(mavCommand, params);
-      const status = mavResultStatus(ack.result);
-      if (ack.result !== 0) {
-        return this.result(command, status, {
+    const policy = getRetryPolicy(command);
+    const maxAttempts = 1 + (policy.category !== 'NEVER' ? policy.maxRetries : 0);
+    let lastResult: CommandResult | null = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0 && policy.retryDelayMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, policy.retryDelayMs));
+      }
+      const sentAt = Date.now();
+      try {
+        const ack = await universalConnectionService.sendMavlinkCommand(mavCommand, params);
+        const status = mavResultStatus(ack.result);
+        if (ack.result !== 0) {
+          return this.result(command, status, {
+            mavCommand,
+            mavResult: ack.result,
+            sentAt,
+            ackAt: ack.receivedAt,
+            retryCount: attempt,
+            error: `MAV_RESULT_${ack.result}`,
+          });
+        }
+        return this.result(command, 'IN_PROGRESS', {
           mavCommand,
           mavResult: ack.result,
           sentAt,
           ackAt: ack.receivedAt,
-          error: `MAV_RESULT_${ack.result}`,
+          retryCount: attempt,
         });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'COMMAND_FAILED';
+        lastResult = this.result(command, message === 'COMMAND_TIMEOUT' ? 'TIMEOUT' : 'FAILED', {
+          mavCommand,
+          sentAt,
+          retryCount: attempt,
+          error: message,
+        });
+        if (message !== 'COMMAND_TIMEOUT' || !isRetryAllowed(command)) {
+          break;
+        }
       }
-      return this.result(command, 'IN_PROGRESS', {
-        mavCommand,
-        mavResult: ack.result,
-        sentAt,
-        ackAt: ack.receivedAt,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'COMMAND_FAILED';
-      return this.result(command, message === 'COMMAND_TIMEOUT' ? 'TIMEOUT' : 'FAILED', {
-        mavCommand,
-        sentAt,
-        error: message,
-      });
     }
+    return lastResult!;
   }
 
   async arm() {

@@ -34,6 +34,10 @@ export type AiActionLifecycle =
   | 'SENDING'
   | 'WAITING_ACK'
   | 'VERIFYING'
+  | 'ACKNOWLEDGED'
+  | 'PREARM_FAILED'
+  | 'COMMAND_DENIED'
+  | 'TIMEOUT'
   | 'SUCCESS'
   | 'FAILED'
   | 'CANCELLED';

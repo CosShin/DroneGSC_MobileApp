@@ -157,6 +157,13 @@ export const missionSlice = createSlice({
       state.syncStatus = 'UNSYNCED';
     },
 
+    invalidateMissionSession: (state) => {
+      state.rawWireItems = [];
+      state.verifyResult = null;
+      state.syncProgress = 0;
+      state.syncStatus = 'UNSYNCED';
+    },
+
     setMissionFromDownload: (state, action: PayloadAction<{ editorItems: MissionEditorItem[]; wireItems: MissionItemInt[] }>) => {
       state.items = action.payload.editorItems;
       state.rawWireItems = action.payload.wireItems;
@@ -235,6 +242,7 @@ export const {
   moveItem,
   selectItem, 
   clearMission,
+  invalidateMissionSession,
   setMissionFromDownload,
   setRawWireItems,
   setVerifyResult,

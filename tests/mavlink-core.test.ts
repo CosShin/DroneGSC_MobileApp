@@ -334,6 +334,7 @@ test('COMMAND_ACK must match session and selected source component', async () =>
   try {
     transport.inject(heartbeat());
     const pending = manager.sendCommandLongAwaitAck(400, [1], 100);
+    await new Promise(resolve => setTimeout(resolve, 0));
     const sentParser = new MavlinkParser();
     const sentCommand = transport.sent
       .flatMap(bytes => sentParser.push(bytes))
@@ -398,6 +399,7 @@ test('HOME_POSITION is requested once per session instead of streamed redundantl
   await manager.connect(transport, {});
   try {
     transport.inject(heartbeat());
+    await new Promise(resolve => setTimeout(resolve, 0));
     const parser = new MavlinkParser();
     const commands = transport.sent
       .flatMap(bytes => parser.push(bytes))

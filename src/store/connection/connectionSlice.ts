@@ -2,10 +2,14 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { RootState } from '../index';
 import { ConnectionType, VehicleType, AutopilotType } from '../../settings/types/connection';
 import { ConnectionPhase } from '../../services/connection/ConnectionStateMachine';
+import {
+  emptyConnectionHealth,
+  type ConnectionHealthSnapshot,
+} from '../../services/connection/ConnectionHealth';
 
 export type ConnectionStatus = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
 
-export interface ConnectionState {
+export interface ConnectionState extends ConnectionHealthSnapshot {
   status: ConnectionStatus;
   activeType: ConnectionType;
   activePortInfo: string;
@@ -28,10 +32,11 @@ export interface ConnectionState {
   mavlinkState: 'IDLE' | 'WAITING_HEARTBEAT' | 'ACTIVE' | 'HEARTBEAT_LOST';
   vehicleState: 'NO_VEHICLE' | 'CONNECTED' | 'STALE';
   packetsLost: number;
-  sessionId?: string | null;
+  sessionId: string | null;
 }
 
 const initialState: ConnectionState = {
+  ...emptyConnectionHealth(),
   status: 'DISCONNECTED',
   activeType: 'WEBSOCKET',
   activePortInfo: 'ws://192.168.1.247:8765/mavlink',
@@ -54,6 +59,7 @@ const initialState: ConnectionState = {
   mavlinkState: 'IDLE',
   vehicleState: 'NO_VEHICLE',
   packetsLost: 0,
+  sessionId: null,
 };
 
 export const connectionSlice = createSlice({
@@ -74,6 +80,7 @@ export const connectionSlice = createSlice({
     },
     setHeartbeat: (state, action: PayloadAction<number>) => {
       state.lastHeartbeat = action.payload;
+      state.lastHeartbeatAt = action.payload;
     },
     setLastPacket: (state, action: PayloadAction<number>) => {
       state.lastPacket = action.payload;
@@ -117,6 +124,12 @@ export const connectionSlice = createSlice({
     setPacketsLost: (state, action: PayloadAction<number>) => {
       state.packetsLost = action.payload;
     },
+    updateConnectionHealth: (state, action: PayloadAction<ConnectionHealthSnapshot>) => {
+      Object.assign(state, action.payload);
+    },
+    setVehicleSessionId: (state, action: PayloadAction<string | null>) => {
+      state.sessionId = action.payload;
+    },
   },
 });
 
@@ -131,10 +144,14 @@ export const {
   updateTrafficStats,
   setLinkState,
   setPacketsLost,
+  updateConnectionHealth,
+  setVehicleSessionId,
 } = connectionSlice.actions;
 
 export const selectConnectionStatus = (state: RootState) => state.connection.status;
-export const selectIsConnected = (state: RootState) => state.connection.status === 'CONNECTED';
+export const selectIsConnected = (state: RootState) => state.connection.status === 'CONNECTED'
+  && state.connection.vehicleStatus === 'AVAILABLE'
+  && state.connection.mavlinkStatus === 'HEARTBEAT_OK';
 export const selectActiveType = (state: RootState) => state.connection.activeType;
 export const selectActivePortInfo = (state: RootState) => state.connection.activePortInfo;
 export const selectVehicleName = (state: RootState) => state.connection.vehicleName;
@@ -152,5 +169,15 @@ export const selectNetworkState = (state: RootState) => state.connection.network
 export const selectMavlinkState = (state: RootState) => state.connection.mavlinkState;
 export const selectVehicleState = (state: RootState) => state.connection.vehicleState;
 export const selectConnectionPhase = (state: RootState) => state.connection.phase;
+export const selectNetworkStatus = (state: RootState) => state.connection.networkStatus;
+export const selectMavlinkStatus = (state: RootState) => state.connection.mavlinkStatus;
+export const selectVehicleStatus = (state: RootState) => state.connection.vehicleStatus;
+export const selectVehicleAvailable = (state: RootState) => state.connection.vehicleStatus === 'AVAILABLE';
+export const selectControlStatus = (state: RootState) => state.connection.controlStatus;
+export const selectControlAvailable = (state: RootState) => state.connection.controlAvailable;
+export const selectLinkQuality = (state: RootState) => state.connection.linkQuality;
+export const selectLinkQualityScore = (state: RootState) => state.connection.linkQualityScore;
+export const selectVideoQualityPolicy = (state: RootState) => state.connection.videoQualityPolicy;
+export const selectConnectionHealth = (state: RootState) => state.connection;
 
 export default connectionSlice.reducer;

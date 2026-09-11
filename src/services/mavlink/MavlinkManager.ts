@@ -9,6 +9,15 @@ import { MavlinkTransport, TransportDiagnostics, TransportEndpoint, TransportRem
 import { getArduCopterModeName } from './ArduPilotModes';
 import { MavlinkSigningSession } from './MavlinkSigning';
 import { createDevDiagnostics } from '../../utils/devDiagnostics';
+import { OutboundPriorityQueue, type OutboundPriority } from '../control/OutboundPriorityQueue';
+
+export type TelemetryRatePolicy = 'FULL' | 'DEGRADED' | 'ESSENTIAL';
+
+interface QueuedMavlinkFrame {
+  messageId: number;
+  payload: Uint8Array;
+  sessionId: number;
+}
 
 export interface MavlinkCommandAck {
   command: number;
@@ -87,6 +96,7 @@ export interface MavlinkTrafficDiagnostics {
   txBytesPerSec: number;
   packetsLost: number;
   mavlinkVersion: 1 | 2 | null;
+  outboundQueueDepth: number;
   parser: MavlinkParserDiagnostics;
 }
 
@@ -150,11 +160,14 @@ export class MavlinkManager {
   private vehicleListeners = new Set<(vehicles: DetectedMavlinkVehicle[]) => void>();
   private packetListeners = new Set<(event: MavlinkPacketEvent) => void>();
   private pendingAckKeys = new Set<string>();
+  private pendingAckCancelers = new Map<string, (error: Error) => void>();
   private vehicleSelectionExplicit = false;
   private sysBatterySample: BatterySample | null = null;
   private batteryStatusSamples = new Map<number, BatterySample>();
   private primaryBatteryId: number | null = null;
   private signing: MavlinkSigningSession | null = null;
+  private telemetryRatePolicy: TelemetryRatePolicy = 'FULL';
+  private readonly outboundQueue = new OutboundPriorityQueue<QueuedMavlinkFrame>(frame => this.writeFrame(frame));
 
   configureSigning(session: MavlinkSigningSession | null) {
     if (this.transport) throw new Error('SIGNING_CHANGE_REQUIRES_DISCONNECT');
@@ -229,6 +242,7 @@ export class MavlinkManager {
     this.gcsHeartbeatTimer = null;
     this.transport?.disconnect();
     this.transport = null;
+    this.outboundQueue.clear('MAVLINK_SESSION_CLOSED');
     this.removeDataListener?.(); this.removeDataListener = null;
     this.removeErrorListener?.(); this.removeErrorListener = null;
     if (this.statsTimer) clearInterval(this.statsTimer);
@@ -248,6 +262,8 @@ export class MavlinkManager {
     this.intervalsRequested = false;
     this.lastSequenceBySource.clear();
     this.vehicles.clear();
+    this.pendingAckCancelers.forEach(cancel => cancel(new Error('MAVLINK_SESSION_CLOSED')));
+    this.pendingAckCancelers.clear();
     this.pendingAckKeys.clear();
     this.vehicleSelectionExplicit = false;
     this.sysBatterySample = null;
@@ -275,6 +291,7 @@ export class MavlinkManager {
       txBytesPerSec: this.state.txBytesPerSec,
       packetsLost: this.state.packetsLost,
       mavlinkVersion: this.state.mavlinkVersion,
+      outboundQueueDepth: this.outboundQueue.getDepth(),
       parser: this.parser.getDiagnostics(),
     };
   }
@@ -309,7 +326,7 @@ export class MavlinkManager {
     this.emitVehicles();
   }
 
-  async sendCommandLong(command: number, params: number[] = []) {
+  async sendCommandLong(command: number, params: number[] = [], priority?: OutboundPriority) {
     if (this.state.systemId === null || this.state.componentId === null) throw new Error('NO_VEHICLE');
     const payload = new Uint8Array(33);
     const view = new DataView(payload.buffer);
@@ -318,7 +335,7 @@ export class MavlinkManager {
     payload[30] = this.state.systemId;
     payload[31] = this.state.componentId;
     console.log(`[MAVLink] COMMAND_LONG send command=${command} target=${this.state.systemId}:${this.state.componentId}`);
-    await this.sendFrame(76, payload);
+    await this.sendFrame(76, payload, { priority: priority ?? this.commandPriority(command, params) });
   }
 
   sendCommandLongAwaitAck(command: number, params: number[] = [], timeoutMs = 3000) {
@@ -340,9 +357,11 @@ export class MavlinkManager {
       const cleanup = () => {
         clearTimeout(timeout);
         remove();
+        this.pendingAckCancelers.delete(pendingKey);
         this.pendingAckKeys.delete(pendingKey);
       };
-      const failOnTimeout = () => { cleanup(); reject(new Error('COMMAND_TIMEOUT')); };
+      const fail = (error: Error) => { cleanup(); reject(error); };
+      const failOnTimeout = () => fail(new Error('COMMAND_TIMEOUT'));
       remove = this.onCommandAck(ack => {
         if (ack.command !== command
           || ack.sessionId !== sessionId
@@ -358,14 +377,14 @@ export class MavlinkManager {
         cleanup(); resolve(ack);
       });
       timeout = setTimeout(failOnTimeout, timeoutMs);
+      this.pendingAckCancelers.set(pendingKey, fail);
       this.sendCommandLong(command, params).catch(error => {
-        cleanup();
-        reject(error);
+        fail(error instanceof Error ? error : new Error('COMMAND_SEND_FAILED'));
       });
     });
   }
 
-  async sendManualControl(input: FlightControlInput) {
+  async sendManualControl(input: FlightControlInput, options: { finalNeutral?: boolean } = {}) {
     if (this.state.systemId === null) throw new Error('NO_VEHICLE');
     const payload = new Uint8Array(11);
     const view = new DataView(payload.buffer);
@@ -385,7 +404,9 @@ export class MavlinkManager {
       throttle: input.throttle,
       validAxes: input.validAxes,
     });
-    await this.sendFrame(69, payload);
+    await this.sendFrame(69, payload, options.finalNeutral
+      ? { priority: 0, discardPendingKey: 'manual-control', maxAgeMs: 500 }
+      : { priority: 1, replaceKey: 'manual-control', maxAgeMs: 500 });
   }
 
   getVehicleTarget() {
@@ -393,30 +414,70 @@ export class MavlinkManager {
     return { systemId: this.state.systemId, componentId: this.state.componentId };
   }
 
-  sendMissionFrame(messageId: number, payload: Uint8Array) { return this.sendFrame(messageId, payload); }
+  sendMissionFrame(messageId: number, payload: Uint8Array) {
+    return this.sendFrame(messageId, payload, { priority: 1 });
+  }
+
+  setTelemetryRatePolicy(policy: TelemetryRatePolicy) {
+    if (this.telemetryRatePolicy === policy) return;
+    this.telemetryRatePolicy = policy;
+    if (this.state.systemId !== null) this.requestMessageIntervals();
+  }
 
   private requestMessageIntervals() {
-    const rates: Array<[number, number]> = [
+    const full: Array<[number, number]> = [
       [0, 1_000_000], [30, 100_000], [33, 200_000], [24, 500_000], [74, 200_000],
       [1, 500_000], [147, 500_000], [65, 200_000], [132, 200_000],
       [100, 200_000], [42, 500_000], [46, 500_000],
     ];
+    const degraded: Array<[number, number]> = [
+      [0, 1_000_000], [30, 200_000], [33, 500_000], [24, 1_000_000], [74, 500_000],
+      [1, 1_000_000], [147, 1_000_000], [65, -1], [132, -1], [100, -1],
+      [42, 1_000_000], [46, 1_000_000],
+    ];
+    const essential: Array<[number, number]> = [
+      [0, 1_000_000], [30, 500_000], [33, 1_000_000], [24, 1_000_000], [74, 1_000_000],
+      [1, 2_000_000], [147, 2_000_000], [65, -1], [132, -1], [100, -1],
+      [42, -1], [46, -1],
+    ];
+    const rates = this.telemetryRatePolicy === 'FULL'
+      ? full
+      : this.telemetryRatePolicy === 'DEGRADED'
+        ? degraded
+        : essential;
     for (const [messageId, intervalUs] of rates) {
-      this.sendCommandLong(511, [messageId, intervalUs]).catch(error => {
-        console.warn(`[MAVLink] Rate request failed for ${messageId}`, error);
+      const priority: OutboundPriority = [0, 30, 33, 24, 74, 1, 147].includes(messageId) ? 2 : 3;
+      this.sendCommandLong(511, [messageId, intervalUs], priority).catch(error => {
+        if (!(error instanceof Error) || error.message !== 'MAVLINK_SESSION_CLOSED') {
+          console.warn(`[MAVLink] Rate request failed for ${messageId}`, error);
+        }
       });
     }
     // Home is session state, not high-rate telemetry. Fetch it once here;
     // HomeService explicitly requests it again after an accepted SET_HOME.
-    this.sendCommandLong(512, [242, 0, 0, 0, 0, 0, 0]).catch(error => {
-      console.warn('[MAVLink] Initial HOME_POSITION request failed', error);
+    this.sendCommandLong(512, [242, 0, 0, 0, 0, 0, 0], 3).catch(error => {
+      if (!(error instanceof Error) || error.message !== 'MAVLINK_SESSION_CLOSED') {
+        console.warn('[MAVLink] Initial HOME_POSITION request failed', error);
+      }
     });
   }
 
-  private async sendFrame(messageId: number, payload: Uint8Array) {
+  private sendFrame(
+    messageId: number,
+    payload: Uint8Array,
+    options: { priority: OutboundPriority; replaceKey?: string; discardPendingKey?: string; maxAgeMs?: number } = { priority: 3 },
+  ) {
     if (!this.transport) throw new Error('TRANSPORT_NOT_CONNECTED');
+    return this.outboundQueue.enqueue(
+      { messageId, payload: payload.slice(), sessionId: this.sessionId },
+      options,
+    );
+  }
+
+  private async writeFrame(frame: QueuedMavlinkFrame) {
+    if (!this.transport || frame.sessionId !== this.sessionId) throw new Error('MAVLINK_SESSION_CHANGED');
     const sequence = this.sequence++ & 0xff;
-    const wireFrame = encodeMavlinkV2(messageId, payload, sequence, 255, 190, this.signing);
+    const wireFrame = encodeMavlinkV2(frame.messageId, frame.payload, sequence, 255, 190, this.signing);
     await this.transport.send(wireFrame);
     this.state.bytesTx += wireFrame.length;
     this.state.packetsTx++;
@@ -432,8 +493,8 @@ export class MavlinkManager {
           sequence,
           systemId: 255,
           componentId: 190,
-          messageId,
-          payload,
+          messageId: frame.messageId,
+          payload: frame.payload,
           rawFrame: wireFrame,
         },
       };
@@ -447,7 +508,12 @@ export class MavlinkManager {
     payload[5] = 8; // MAV_AUTOPILOT_INVALID
     payload[7] = 4; // MAV_STATE_ACTIVE
     payload[8] = 3; // MAVLink protocol version
-    return this.sendFrame(0, payload);
+    return this.sendFrame(0, payload, { priority: 2, replaceKey: 'gcs-heartbeat', maxAgeMs: 1_000 });
+  }
+
+  private commandPriority(command: number, params: number[]): OutboundPriority {
+    if (command === 20 || command === 21 || (command === 400 && (params[0] ?? 0) === 0)) return 0;
+    return 1;
   }
 
   private handleDatagram(data: Uint8Array, remote: TransportRemoteInfo) {

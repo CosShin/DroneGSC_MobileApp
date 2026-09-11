@@ -84,6 +84,32 @@ test('AiSpeechService tracks speaking state and handles stop cleanly', async () 
   }
 });
 
+test('AiSpeechService automatically selects an available male voice for the deep copilot preset', async () => {
+  let spokenOptions: any = null;
+  const provider = {
+    speak: async (_text: string, options: any) => { spokenOptions = options; },
+    stop: async () => undefined,
+    isSpeaking: () => false,
+    getAvailableVoices: async () => [
+      { identifier: 'voice-female', name: 'Female', language: 'vi-VN', gender: 'FEMALE' as const },
+      { identifier: 'voice-male', name: 'Male', language: 'vi-VN', gender: 'MALE' as const },
+    ],
+  };
+  const tts = new AiSpeechService(provider);
+
+  await tts.speak('Xin chào phi công.', {
+    language: 'vi-VN',
+    gender: 'MALE',
+    rate: 0.9,
+    pitch: 0.8,
+    style: 'COPILOT',
+  });
+
+  assert.equal(spokenOptions.voice, 'voice-male');
+  assert.equal(spokenOptions.pitch, 0.77);
+  assert.equal(spokenOptions.rate, 0.87);
+});
+
 test('Voice Safety: verbal phrase "Arm drone" is only an advisory input and cannot execute vehicle commands', () => {
   // Verbal input from STT is purely a string fed into prompt builder
   const spokenText = 'Arm drone';
@@ -111,3 +137,92 @@ test('detectVoiceGender identifies male and female voices accurately', async () 
 
   assert.equal(detectVoiceGender({ identifier: 'custom-tts-voice', name: 'Neutral' }), 'UNKNOWN');
 });
+
+test('aniTtsService alias and setVoice API are exported and functional', async () => {
+  const { aniTtsService, AniTtsService, aiSpeechService } = await import('../src/services/voice/AiSpeechService');
+  assert.equal(aniTtsService, aiSpeechService);
+  assert.equal(typeof AniTtsService, 'function');
+  assert.equal(typeof aniTtsService.setVoice, 'function');
+  aniTtsService.setVoice('test-voice');
+});
+
+test('AiSpeechService passes volume: 1.0 to segments and speak', async () => {
+  let playedItems: any[] = [];
+  const provider: any = {
+    speakSegments: async (items: any[]) => {
+      playedItems = items;
+    },
+    stop: async () => undefined,
+    isSpeaking: () => false,
+    autoSelectVoices: async () => ({ vi: 'vi-test', en: 'en-test' }),
+    getAvailableVoices: async () => [],
+  };
+  const tts = new AiSpeechService(provider);
+  await tts.speak('Pin còn 80%.');
+  assert.ok(playedItems.length > 0);
+  assert.equal(playedItems[0].volume, 1.0);
+});
+
+test('AiService speaks when query source is voice even if voiceRepliesEnabled is false', async () => {
+  const { aiService } = await import('../src/services/ai/AiService');
+  const { aiSpeechService } = await import('../src/services/voice/AiSpeechService');
+
+  let spokenTextReceived: string | null = null;
+  const originalSpeak = aiSpeechService.speak.bind(aiSpeechService);
+  aiSpeechService.speak = async (text: string) => {
+    spokenTextReceived = text;
+  };
+
+  try {
+    const mockStore = {
+      getState: () => ({
+        settings: {
+          ai: {
+            enabled: true,
+            provider: 'OLLAMA',
+            host: '127.0.0.1',
+            port: 11434,
+            model: 'qwen3.5:9b',
+            timeoutMs: 30000,
+            autoConnect: true,
+            enableFallback: false,
+            fallbackModel: 'qwen3.5:9b',
+            voiceEnabled: true,
+            voiceRepliesEnabled: false, // Voice replies turned off for text
+            speechLanguage: 'vi-VN',
+            speechRate: 0.9,
+            speechPitch: 0.8,
+            voiceIdentifier: null,
+            voiceGender: 'MALE',
+            voiceStyle: 'COPILOT',
+          },
+        },
+        connection: {
+          status: 'CONNECTED',
+          sessionId: 'session-voice-test',
+        },
+        drone: {
+          armed: true,
+          mode: 'GUIDED',
+        },
+        telemetry: {
+          altitudeRelMeters: 0,
+        },
+      }),
+    };
+    aiService.setStore(mockStore as any);
+
+    // Voice query: MUST speak even with voiceRepliesEnabled: false
+    await aiService.sendUserMessage('bay lên 5m', { source: 'voice' });
+    assert.ok(spokenTextReceived !== null, 'TTS should be triggered for voice query');
+
+    // Text query: MUST NOT speak when voiceRepliesEnabled: false
+    spokenTextReceived = null;
+    await aiService.sendUserMessage('bay lên 5m', { source: 'text' });
+    assert.equal(spokenTextReceived, null, 'TTS should NOT be triggered for text query when voiceRepliesEnabled is false');
+  } finally {
+    aiSpeechService.speak = originalSpeak;
+    aiService.setStore(null);
+  }
+});
+

@@ -29,8 +29,10 @@ import { calculateBearingDegrees, calculateDistanceMeters, formatBearing, format
 import { colors, glass, radius, spacing } from '../../theme/gcsTheme';
 import { useScreenOrientation } from '../../hooks/useScreenOrientation';
 import { useTruthfulTelemetry } from '../../hooks/useTruthfulTelemetry';
+import { useFreshnessClock } from '../../hooks/useFreshnessClock';
 import { universalConnectionService } from '../../services/connection/UniversalConnectionService';
 import { safetyLayer } from '../../services/command/SafetyLayer';
+import { precisionLandingAdvisor, type PrecisionLandingTargetState } from '../../services/vision/PrecisionLandingAdvisor';
 import { useGcsLayout } from '../../hooks/useGcsLayout';
 import { VideoStream } from '../../components/video/VideoStream';
 import { GlassSurface } from '../../components/gcs/GlassSurface';
@@ -46,7 +48,11 @@ export function VehicleScreen() {
   const dispatch = useAppDispatch();
   const truth = useTruthfulTelemetry();
   const layout = useGcsLayout();
+  const now = useFreshnessClock(500);
   const [tab, setTab] = React.useState<Tab>('OVERVIEW');
+  const [precisionTarget, setPrecisionTarget] = React.useState<PrecisionLandingTargetState>(() =>
+    precisionLandingAdvisor.getTargetState(),
+  );
 
   const vehicle = useAppSelector(selectVehicleName);
   const autopilot = useAppSelector(selectAutopilot);
@@ -77,6 +83,23 @@ export function VehicleScreen() {
     : null;
 
   const ready = truth.connected && !pending;
+  const precisionAgeMs = Math.max(0, now - precisionTarget.timestamp);
+  const precisionFresh = precisionTarget.targetFound && precisionAgeMs <= 5_000;
+  const precisionTag = precisionFresh
+    ? (precisionTarget.tagId != null ? `TAG #${precisionTarget.tagId}` : 'DETECTED')
+    : '--';
+  const precisionOffset = precisionFresh
+    ? `${formatCentimeters(precisionTarget.offsetXCentimeters)} X · ${formatCentimeters(precisionTarget.offsetYCentimeters)} Y`
+    : '--';
+  const precisionRange = precisionFresh && precisionTarget.altitudeMeters != null
+    ? `${precisionTarget.altitudeMeters.toFixed(2)} m`
+    : '--';
+  const precisionLock = precisionFresh ? 'LOCKED' : 'NO TARGET';
+  const precisionConfidence = precisionFresh && precisionTarget.confidence != null
+    ? `${Math.round(precisionTarget.confidence * 100)}%`
+    : '--';
+
+  React.useEffect(() => precisionLandingAdvisor.subscribe(setPrecisionTarget), []);
 
   const confirm = (label: string, run: () => void) => {
     Alert.alert(
@@ -275,7 +298,7 @@ export function VehicleScreen() {
                 <EmptyStateCard
                   icon="quadcopter"
                   title="No vehicle detected"
-                  description={truth.mavlinkState === 'WAITING_HEARTBEAT' ? `Transport ready (${config.type}). Waiting for MAVLink heartbeat.` : 'Connect a vehicle to see health and live telemetry.'}
+                  description={truth.mavlinkState === 'WAITING' ? `Transport ready (${config.type}). Waiting for MAVLink heartbeat.` : 'Connect a vehicle to see health and live telemetry.'}
                   actionLabel="Go to connection settings"
                   onAction={() => navigation.navigate('Settings')}
                 />
@@ -326,12 +349,15 @@ export function VehicleScreen() {
               </View>
               <View style={styles.precisionInfo}>
                 <SectionTitle>Precision landing</SectionTitle>
-                <SummaryRow icon="crosshairs" label="Tag detection" value="--" />
-                <SummaryRow icon="axis-arrow" label="Target offset" value="--" />
-                <SummaryRow icon="lock-outline" label="Lock state" value="--" />
-                <SummaryRow icon="percent-outline" label="Confidence" value="--" />
+                <SummaryRow icon="crosshairs" label="Tag detection" value={precisionTag} tone={precisionFresh ? 'success' : 'neutral'} />
+                <SummaryRow icon="axis-arrow" label="Target offset" value={precisionOffset} tone={precisionFresh ? 'primary' : 'neutral'} />
+                <SummaryRow icon="ruler" label="Target range" value={precisionRange} tone={precisionFresh ? 'primary' : 'neutral'} />
+                <SummaryRow icon="lock-outline" label="Lock state" value={precisionLock} tone={precisionFresh ? 'success' : 'neutral'} />
+                <SummaryRow icon="percent-outline" label="Confidence" value={precisionConfidence} />
                 <Text style={styles.help}>
-                  Video and detector diagnostics are independent. Values stay -- until the Pi sends real detector data.
+                  {precisionFresh
+                    ? `LANDING_TARGET #149 received ${precisionAgeMs} ms ago.`
+                    : 'Waiting for fresh MAVLink LANDING_TARGET #149 from the Pi detector.'}
                 </Text>
               </View>
             </Panel>
@@ -402,6 +428,10 @@ function SummaryRow({ icon, label, value, tone = 'neutral' }: { icon: any; label
       </View>
     </View>
   );
+}
+
+function formatCentimeters(value?: number | null) {
+  return value == null ? '-- cm' : `${Math.round(value)} cm`;
 }
 
 const styles = StyleSheet.create({

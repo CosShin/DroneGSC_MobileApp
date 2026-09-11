@@ -1,7 +1,7 @@
 import type { RootState } from '../../store';
 import type { MavlinkInspectorSnapshot } from '../mavlink/MavlinkInspectorService';
 import { calculateBearingDegrees, calculateDistanceMeters, isValidCoordinate } from '../../utils/geographic';
-import { isTelemetryStale } from '../../utils/telemetry';
+import { isGpsStale, isTelemetryStale } from '../../utils/telemetry';
 import { AppConfig } from '../../config';
 import { MAV_CMD, getCommandDefinition } from '../mission/MissionCommandRegistry';
 import type { FlightContextSnapshot, NormalizedMissionSummary } from './AiTypes';
@@ -14,7 +14,8 @@ function getStoreState(): RootState | null {
   if (!lazyStore) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      lazyStore = require('../../store').store;
+      const mod = require('../../store');
+      lazyStore = mod.store || mod.default?.store || mod;
     } catch {
       lazyStore = null;
     }
@@ -50,8 +51,10 @@ export function buildFlightContext(
   const home = state.home;
   const mission = state.mission;
 
-  const isVehicleConnected = connection.status === 'CONNECTED' && connection.vehicleState === 'CONNECTED';
-  const isHeartbeatLost = connection.mavlinkState === 'HEARTBEAT_LOST' || connection.vehicleState === 'STALE';
+  const isVehicleConnected = connection.status === 'CONNECTED'
+    && connection.vehicleStatus === 'AVAILABLE'
+    && connection.mavlinkStatus === 'HEARTBEAT_OK';
+  const isHeartbeatLost = connection.mavlinkStatus === 'LOST' || connection.vehicleStatus === 'UNRESPONSIVE';
 
   // 1. Vehicle State
   const vehicle = {
@@ -69,11 +72,11 @@ export function buildFlightContext(
   const connectionState = {
     transport: connection.activeType,
     portInfo: connection.activePortInfo,
-    networkState: connection.networkState,
-    mavlinkState: connection.mavlinkState,
-    vehicleState: connection.vehicleState,
-    heartbeatAgeMs: connection.lastHeartbeat ? Math.max(0, now - connection.lastHeartbeat) : null,
-    latencyMs: connection.latencyMs,
+    networkState: connection.networkStatus,
+    mavlinkState: connection.mavlinkStatus,
+    vehicleState: connection.vehicleStatus,
+    heartbeatAgeMs: connection.heartbeatAgeMs,
+    latencyMs: connection.rttMs,
     rxPps: connection.packetsPerSec,
     txPps: connection.txPacketsPerSec,
     bytesReceived: connection.bytesReceived,
@@ -86,18 +89,28 @@ export function buildFlightContext(
   // 3. Battery State (Truthful: null if not received)
   const batteryData = telemetry.battery?.value;
   const battery = batteryData ? {
+    available: true,
     voltage: batteryData.voltage != null ? Number(batteryData.voltage.toFixed(2)) : null,
     current: batteryData.current != null ? Number(batteryData.current.toFixed(2)) : null,
     percentage: batteryData.percentage != null ? Math.round(batteryData.percentage) : null,
+    remainingPercent: batteryData.percentage != null ? Math.round(batteryData.percentage) : null,
   } : null;
 
   // 4. GPS State (Truthful: null if not received)
   const gpsData = telemetry.gps?.value;
   const isGpsValid = gpsData && isValidCoordinate(gpsData.latitude, gpsData.longitude);
+  const fixType = gpsData?.gpsFix ?? null;
+  const satellites = gpsData?.satellites ?? null;
+  const fix = fixType != null && fixType >= 3;
+  const fixDescription = fixType == null ? 'UNKNOWN' : fixType >= 3 ? '3D FIX' : fixType === 2 ? '2D FIX' : 'NO FIX';
   const gps = gpsData ? {
-    fixType: gpsData.gpsFix,
-    satellites: gpsData.satellites,
+    available: true,
+    fix,
+    fixType,
+    fixDescription,
+    satellites,
     hdop: gpsData.hdop != null ? Number(gpsData.hdop.toFixed(2)) : null,
+    vdop: null,
     latitude: isGpsValid ? Number(gpsData.latitude.toFixed(7)) : null,
     longitude: isGpsValid ? Number(gpsData.longitude.toFixed(7)) : null,
     altitude: gpsData.altitude != null ? Number(gpsData.altitude.toFixed(1)) : null,
@@ -158,12 +171,33 @@ export function buildFlightContext(
   };
 
   // 8. Sensors
-  const sensors = (telemetry.sensors?.value ?? []).map(s => ({
+  const rawSensors = telemetry.sensors?.value ?? [];
+  const sensors = rawSensors.map(s => ({
     name: s.name,
     health: s.health,
     value: s.value,
     message: s.message,
   }));
+
+  const ekfSensor = rawSensors.find(s => /ekf|estimator/i.test(s.name));
+  const ekf = {
+    available: Boolean(ekfSensor),
+    healthy: ekfSensor ? ekfSensor.health === 'GOOD' : null,
+    message: ekfSensor?.message ?? ekfSensor?.value,
+  };
+
+  const flowSensor = rawSensors.find(s => /flow|optical/i.test(s.name));
+  const opticalFlow = {
+    available: Boolean(flowSensor),
+    quality: flowSensor?.value ? parseFloat(flowSensor.value) : null,
+  };
+
+  const targetState = precisionLandingAdvisor.getTargetState();
+  const rangeSensor = rawSensors.find(s => /range|distance|lidar|sonar/i.test(s.name));
+  const rangefinder = {
+    available: Boolean(rangeSensor) || targetState.altitudeMeters != null,
+    distance: rangeSensor?.value ? parseFloat(rangeSensor.value) : targetState.altitudeMeters ?? null,
+  };
 
   // 9. Warnings & PreArm Checks
   const warnings: string[] = [];
@@ -176,7 +210,7 @@ export function buildFlightContext(
     warnings.push('PreArm: Need 3D GPS Fix');
   }
 
-  if (telemetry.gps && isTelemetryStale(telemetry.gps.timestamp)) {
+  if (telemetry.gps && isGpsStale(telemetry.gps.timestamp)) {
     warnings.push('PreArm: GPS telemetry stale');
   }
 
@@ -185,7 +219,7 @@ export function buildFlightContext(
   }
 
   // Active status texts with severity <= 4 (Emergency, Alert, Critical, Error, Warning)
-  const recentTexts = telemetry.statusTexts
+  const recentTexts = (telemetry.statusTexts ?? [])
     .filter(msg => msg.severity <= 4 && now - msg.timestamp < 30_000)
     .map(msg => msg.text);
   
@@ -239,7 +273,7 @@ export function buildFlightContext(
     };
   }
 
-  return {
+  const snapshot: FlightContextSnapshot = {
     timestamp: now,
     vehicle,
     connection: connectionState,
@@ -252,5 +286,21 @@ export function buildFlightContext(
     warnings,
     mission: missionSummary,
     precisionLanding: precisionLandingAdvisor.getTargetState(),
+    ekf,
+    opticalFlow,
+    rangefinder,
   };
+
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    console.log('[ANI CONTEXT SNAPSHOT]', {
+      vehicleConnected: isVehicleConnected,
+      mode: drone.flightMode || 'UNKNOWN',
+      armed: drone.armed,
+      battery: battery?.percentage ?? null,
+      gpsFix: gps?.fix ?? false,
+      satellites: gps?.satellites ?? null,
+    });
+  }
+
+  return snapshot;
 }

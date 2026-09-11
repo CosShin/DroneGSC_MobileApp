@@ -145,8 +145,13 @@ export function VirtualJoystick({
 
   return (
     <View style={[styles.wrapper, isInteracting ? styles.wrapperActive : styles.wrapperIdle]}>
+      <View style={[styles.labelPill, isInteracting && { borderColor: accentMuted }]}>
+        <View style={[styles.labelDot, { backgroundColor: accent }]} />
+        <Text style={[styles.label, isInteracting && { color: accent }]}>{label}</Text>
+      </View>
       <View
         accessible
+        accessibilityRole="adjustable"
         accessibilityLabel={`${label} virtual joystick`}
         hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
         onTouchStart={handleTouchStart}
@@ -186,11 +191,6 @@ export function VirtualJoystick({
             <View style={styles.knobHighlight} />
           </View>
         </Animated.View>
-      </View>
-
-      <View style={[styles.labelPill, isInteracting && { borderColor: accentMuted }]}>
-        <View style={[styles.labelDot, { backgroundColor: accent }]} />
-        <Text style={[styles.label, isInteracting && { color: accent }]}>{label}</Text>
       </View>
     </View>
   );
@@ -313,14 +313,14 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '-18deg' }],
   },
   labelPill: {
-    marginTop: 8,
-    minHeight: 20,
+    marginBottom: 4,
+    minHeight: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
-    paddingHorizontal: 9,
-    borderRadius: 10,
+    gap: 4,
+    paddingHorizontal: 7,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.48)',
     backgroundColor: 'rgba(255, 255, 255, 0.18)',

@@ -11,7 +11,7 @@ const PLAYBACK_MONITOR = `
   if (window.__anitechVideoMonitorInstalled) return true;
   window.__anitechVideoMonitorInstalled = true;
   var style = document.createElement('style');
-  style.textContent = 'html,body{margin:0!important;width:100%!important;height:100%!important;background:#050a11!important;overflow:hidden!important} video{width:100%!important;height:100%!important;object-fit:cover!important;object-position:center!important;background:#050a11!important}';
+  style.textContent = 'html,body{margin:0!important;width:100%!important;height:100%!important;background:#050a11!important;overflow:hidden!important} video{width:100%!important;height:100%!important;object-fit:contain!important;object-position:center!important;background:#050a11!important}';
   document.head.appendChild(style);
   var wired = new WeakSet();
   function send(value) { window.ReactNativeWebView.postMessage(value); }

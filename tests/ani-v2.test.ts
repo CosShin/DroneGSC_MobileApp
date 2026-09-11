@@ -22,7 +22,9 @@ import connectionReducer, {
   setLinkState,
   setStatus,
   updateTrafficStats,
+  updateConnectionHealth,
 } from '../src/store/connection/connectionSlice';
+import { emptyConnectionHealth } from '../src/services/connection/ConnectionHealth';
 import droneReducer, { setArmed, setFlightMode, setSystemStatus } from '../src/store/drone/droneSlice';
 import telemetryReducer, { updateBattery, updateGps, updateSensors } from '../src/store/telemetry/telemetrySlice';
 import homeReducer, { setHomePosition } from '../src/store/home/homeSlice';
@@ -58,6 +60,12 @@ function createTestStore() {
 function markVehicleConnected(store: ReturnType<typeof createTestStore>) {
   const now = Date.now();
   store.dispatch(setStatus('CONNECTED'));
+  store.dispatch(updateConnectionHealth({
+    ...emptyConnectionHealth(),
+    networkStatus: 'CONNECTED', mavlinkStatus: 'HEARTBEAT_OK', vehicleStatus: 'AVAILABLE',
+    controlStatus: 'READY', controlAvailable: true, linkQuality: 'GOOD', linkQualityScore: 85,
+    lastHeartbeatAt: now - 140, heartbeatAgeMs: 140, transport: 'WEBSOCKET', transportStatus: 'READY', updatedAt: now,
+  }));
   store.dispatch(setActiveConnectionInfo({ type: 'WEBSOCKET', portInfo: 'ws://100.81.87.111:8765/mavlink' }));
   store.dispatch(setDetectedVehicle({ name: 'ArduCopter SYS1', vehicleType: 'COPTER', autopilot: 'ARDUPILOT' }));
   store.dispatch(setLinkState({
@@ -112,7 +120,7 @@ test('ANI V2 router keeps general chat independent from vehicle telemetry', () =
   assert.equal(general.requiresFlightContext, false);
 
   const status = routeAniIntent('ANI, chuyện gì đang xảy ra?');
-  assert.equal(status.intent, 'VEHICLE_STATUS');
+  assert.equal(status.intent, 'FLIGHT_STATUS');
   assert.equal(status.requiresFlightContext, true);
   assert.equal(status.deterministic, true);
 

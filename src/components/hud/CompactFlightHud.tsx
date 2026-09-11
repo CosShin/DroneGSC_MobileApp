@@ -8,6 +8,7 @@ import {
   selectTelemetryStale,
   selectVelocity,
 } from '../../store/telemetry/telemetrySlice';
+import { useTruthfulTelemetry } from '../../hooks/useTruthfulTelemetry';
 import { useGcsLayout } from '../../hooks/useGcsLayout';
 import {
   buildHeadingTape,
@@ -34,14 +35,14 @@ function Metric({ label, value, unit }: { label: string; value: string; unit?: s
 /** Compact, non-interactive FPV instrument cluster positioned between both sticks. */
 export const CompactFlightHud = React.memo(function CompactFlightHud() {
   const layout = useGcsLayout();
-  const connection = useAppSelector(selectConnectionStatus);
+  const truth = useTruthfulTelemetry();
   const stale = useAppSelector(selectTelemetryStale);
   const attitude = useAppSelector(selectAttitude);
   const gps = useAppSelector(selectGps);
   const velocity = useAppSelector(selectVelocity);
 
   const compact = layout.isCompactLandscape || layout.contentHeight < 430;
-  const telemetryLive = connection === 'CONNECTED' && !stale;
+  const telemetryLive = truth.connected && !stale;
   const hasAttitude = telemetryLive && attitude != null;
 
   const roll = hasAttitude ? attitude.value.roll : 0;

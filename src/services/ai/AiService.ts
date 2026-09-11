@@ -38,6 +38,8 @@ import {
   type AniDeterministicResponse,
 } from './AniDiagnostics';
 import { buildParameterAssistantResponse } from './ParameterAssistant';
+import { resolveAniCommand, type PendingAniCommand } from './AniCommandInterpreter';
+import { getWeatherForAni, getWebSearchUnavailableMessage } from './AniRealtimeTools';
 
 let lazyStore: { getState: () => RootState } | null = null;
 let messageSequence = 0;
@@ -51,7 +53,8 @@ function getStoreState(): RootState | null {
   if (!lazyStore) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      lazyStore = require('../../store').store;
+      const mod = require('../../store');
+      lazyStore = mod.store || mod.default?.store || mod;
     } catch {
       lazyStore = null;
     }
@@ -83,8 +86,10 @@ class AiService {
   private messages: AiChatMessage[] = [];
   private isThinking = false;
   private currentAbortController: AbortController | null = null;
+  private pendingCommand: PendingAniCommand | null = null;
   private listeners = new Set<(state: AiServiceState) => void>();
   private customStore: { getState: () => any } | null = null;
+  private currentQuerySource: 'voice' | 'text' = 'text';
 
   setStore(s: { getState: () => any } | null) {
     if (this.currentAbortController) {
@@ -144,6 +149,7 @@ class AiService {
   }
 
   clearHistory() {
+    this.pendingCommand = null;
     this.messages = [
       {
         id: nextMessageId('welcome'),
@@ -201,15 +207,23 @@ class AiService {
     return result;
   }
 
-  async sendUserMessage(userPrompt: string): Promise<void> {
-    return this.sendMessage(userPrompt);
+  async sendUserMessage(
+    userPrompt: string,
+    options?: { source?: 'voice' | 'text' },
+  ): Promise<void> {
+    return this.sendMessage(userPrompt, options);
   }
 
   clearChat() {
     this.clearHistory();
   }
 
-  async sendMessage(userPrompt: string): Promise<void> {
+  async sendMessage(
+    userPrompt: string,
+    options?: { source?: 'voice' | 'text' },
+  ): Promise<void> {
+    const source = options?.source ?? 'text';
+    this.currentQuerySource = source;
     if (this.isThinking) return;
     const trimmed = userPrompt.trim();
     if (!trimmed) return;
@@ -221,16 +235,77 @@ class AiService {
     }
 
     const route = routeAniIntent(trimmed);
-    if (route.intent === 'VISION_QUERY') {
+    const state = this.customStore?.getState() ?? getStoreState();
+
+    if (state && typeof __DEV__ !== 'undefined' && __DEV__) {
+      try {
+        const liveCtx = buildFlightContext(state);
+        console.log('[ANI CONTEXT]');
+        console.log(`vehicleConnected: ${liveCtx.vehicle.connected}`);
+        console.log(`mavlinkHeartbeat: ${liveCtx.connection.mavlinkState} (HB ${liveCtx.connection.heartbeatAgeMs} ms)`);
+        console.log(`mode: ${liveCtx.vehicle.mode}`);
+        console.log(`armed: ${liveCtx.vehicle.armed}`);
+        console.log(`battery: ${liveCtx.battery?.percentage != null ? `${liveCtx.battery.percentage}%` : 'null'}`);
+        console.log(`gps.fix: ${liveCtx.gps?.fix ?? false}`);
+        console.log(`gps.satellites: ${liveCtx.gps?.satellites ?? 'null'}`);
+        console.log(`attitude: roll=${liveCtx.flight.roll}, pitch=${liveCtx.flight.pitch}, yaw=${liveCtx.flight.yaw}`);
+        console.log(`ekf: ${liveCtx.ekf?.available ? (liveCtx.ekf.healthy ? 'HEALTHY' : 'UNHEALTHY') : 'NO DATA'}`);
+        console.log(`flow: ${liveCtx.opticalFlow?.available ? 'AVAILABLE' : 'NO DATA'}`);
+        console.log(`rangefinder: ${liveCtx.rangefinder?.available ? `${liveCtx.rangefinder.distance}m` : 'NO DATA'}`);
+        console.log('[ANI CONTEXT SNAPSHOT]', {
+          vehicleConnected: liveCtx.vehicle.connected,
+          mode: liveCtx.vehicle.mode,
+          armed: liveCtx.vehicle.armed,
+          battery: liveCtx.battery?.percentage ?? null,
+          gpsFix: liveCtx.gps?.fix ?? false,
+          satellites: liveCtx.gps?.satellites ?? null,
+        });
+      } catch {
+        // ignore dev log error
+      }
+    }
+
+    const commandResolution = this.shouldTryCommandResolution(route)
+      ? resolveAniCommand(trimmed, this.pendingCommand)
+      : this.pendingCommand
+      ? resolveAniCommand(trimmed, this.pendingCommand)
+      : null;
+
+    if (commandResolution) {
+      this.addUserMessage(trimmed);
+      this.pendingCommand = commandResolution.clarification ?? null;
+      if (commandResolution.intent) {
+        await this.addActionProposalResponse(commandResolution.message, commandResolution.intent, state);
+      } else {
+        await this.addAssistantMessage(commandResolution.message, 'INFORMATIVE');
+      }
+      return;
+    }
+
+    if (this.pendingCommand && Date.now() - this.pendingCommand.createdAt >= 60_000) {
+      this.pendingCommand = null;
+    }
+
+    if (route.intent === 'VISION_QUERY' || route.intent === 'VISION_ACTION') {
       await this.sendVisionQuery(trimmed);
       return;
     }
 
     this.addUserMessage(trimmed);
 
-    const state = this.customStore?.getState() ?? getStoreState();
+    if (route.intent === 'WEATHER') {
+      const result = await getWeatherForAni(trimmed, state);
+      await this.addAssistantMessage(result.summary, result.ok ? 'INFORMATIVE' : 'CAUTION');
+      return;
+    }
+
+    if (route.intent === 'WEB_SEARCH') {
+      await this.addAssistantMessage(getWebSearchUnavailableMessage(trimmed), 'CAUTION');
+      return;
+    }
+
     if (route.deterministic && state) {
-      this.addDeterministicResponse(this.buildDeterministicResponse(route.intent, buildAniToolSnapshot(state), trimmed));
+      await this.addDeterministicResponse(this.buildDeterministicResponse(route.intent, buildAniToolSnapshot(state), trimmed));
       return;
     }
 
@@ -289,7 +364,7 @@ class AiService {
       });
       this.messages = trimConversationHistory(this.messages, 15);
       this.emit();
-      void aiSpeechService.speak(advisory, { language: 'vi-VN', tone });
+      void this.speakResponseIfNeeded(advisory, tone);
       return;
     }
 
@@ -298,7 +373,7 @@ class AiService {
     if (deterministicIntent && state) {
       const actionLabel = QUICK_ACTION_LABELS[actionType] || actionType;
       this.addUserMessage(actionLabel);
-      this.addDeterministicResponse(this.buildDeterministicResponse(deterministicIntent, buildAniToolSnapshot(state), actionLabel));
+      await this.addDeterministicResponse(this.buildDeterministicResponse(deterministicIntent, buildAniToolSnapshot(state), actionLabel));
       return;
     }
 
@@ -366,6 +441,7 @@ class AiService {
     });
     this.messages = trimConversationHistory(this.messages, 15);
     this.emit();
+    void this.speakResponseIfNeeded(spoken.spokenText || alert.message, tone, true);
   }
 
   /**
@@ -455,6 +531,8 @@ class AiService {
       // Build conversation request array
       const historyRequests: ChatRequestMessage[] = this.messages
         .filter(m => m.id !== assistantMsgId && m.status === 'success')
+        .slice(-7)
+        .filter((m, index, arr) => !(index === arr.length - 1 && m.role === 'user'))
         .slice(-6)
         .map(m => ({
           role: m.role,
@@ -516,6 +594,7 @@ class AiService {
       this.diagnostics.latencyMs = response.latencyMs;
       this.diagnostics.lastTestedAt = Date.now();
       this.diagnostics.lastError = null;
+      void this.speakResponseIfNeeded(semantic.spokenText || parsed.message, semantic.tone);
     } catch (error) {
       let errorMsg = error instanceof Error ? error.message : 'Unknown AI request error';
       const metadata = getModelMetadata(settings.model);
@@ -553,6 +632,7 @@ class AiService {
           this.diagnostics.latencyMs = fallbackResponse.latencyMs;
           this.diagnostics.lastTestedAt = Date.now();
           this.diagnostics.lastError = null;
+          void this.speakResponseIfNeeded(parsed.message, 'NORMAL');
           return;
         } catch (fallbackError) {
           const fbErrorMsg = fallbackError instanceof Error ? fallbackError.message : 'Fallback request failed';
@@ -596,7 +676,7 @@ class AiService {
     this.messages = trimConversationHistory(this.messages, 15);
   }
 
-  private addDeterministicResponse(response: AniDeterministicResponse) {
+  private async addDeterministicResponse(response: AniDeterministicResponse) {
     this.messages.push({
       id: nextMessageId('asst'),
       role: 'assistant',
@@ -612,10 +692,14 @@ class AiService {
     this.diagnostics.lastError = null;
     this.diagnostics.lastTestedAt = Date.now();
     this.emit();
+    await this.speakResponseIfNeeded(response.spokenText || response.content, response.tone);
   }
 
   private buildPromptForRoute(prompt: string, route: AniRoute, state: RootState | null) {
     if (!route.requiresFlightContext || !state) {
+      if (route.intent === 'GENERAL_CHAT') {
+        return prompt;
+      }
       return `### ANI ROUTE
 intent: ${route.intent}
 confidence: ${route.confidence.toFixed(2)}
@@ -673,9 +757,133 @@ Use the snapshot only for live vehicle facts. For unavailable metrics, say they 
         return buildParameterAssistantResponse(prompt, snapshot);
       case 'FLIGHT_DEBRIEF':
         return buildFlightDebrief(snapshot);
+      case 'FLIGHT_STATUS':
       case 'VEHICLE_STATUS':
       default:
         return buildWhatsHappening(snapshot);
+    }
+  }
+
+  private shouldTryCommandResolution(route: AniRoute) {
+    return route.intent === 'FLIGHT_ACTION'
+      || route.intent === 'MISSION_ACTION'
+      || route.intent === 'NAVIGATION_ACTION';
+  }
+
+  private async addActionProposalResponse(
+    message: string,
+    intent: import('./intents/AiIntentTypes').AiIntentParameters,
+    state: RootState | null,
+  ) {
+    const vehicleSessionId = state?.connection?.sessionId || null;
+    const parsed = aiIntentParser.parse(JSON.stringify({
+      message,
+      intent: this.serializeIntentForParser(intent),
+    }), vehicleSessionId);
+
+    if (parsed.proposal && state) {
+      const validationErr = aiActionValidator.validate(parsed.proposal, state, vehicleSessionId);
+      if (validationErr) {
+        parsed.proposal.error = validationErr;
+        parsed.proposal.state = 'FAILED';
+      }
+    }
+
+    const semantic = processSemanticResponse(
+      parsed.message,
+      state,
+      this.getSettings().speechLanguage || 'vi-VN'
+    );
+
+    this.messages.push({
+      id: nextMessageId('asst'),
+      role: 'assistant',
+      content: parsed.message,
+      proposal: parsed.proposal,
+      structuredCard: semantic.structuredCard,
+      spokenText: semantic.spokenText,
+      tone: semantic.tone,
+      timestamp: Date.now(),
+      status: 'success',
+    });
+    this.messages = trimConversationHistory(this.messages, 15);
+    this.diagnostics.status = 'READY';
+    this.diagnostics.lastError = null;
+    this.diagnostics.lastTestedAt = Date.now();
+    this.emit();
+    await this.speakResponseIfNeeded(semantic.spokenText || parsed.message, semantic.tone);
+  }
+
+  private serializeIntentForParser(intent: import('./intents/AiIntentTypes').AiIntentParameters) {
+    switch (intent.type) {
+      case 'TAKEOFF':
+        return { type: intent.type, parameters: { altitudeMeters: intent.altitudeMeters } };
+      case 'SET_MODE':
+        return { type: intent.type, parameters: { mode: intent.mode } };
+      case 'SET_HOME':
+        return { type: intent.type, parameters: intent };
+      case 'GOTO':
+        return { type: intent.type, parameters: intent };
+      case 'CREATE_MISSION':
+        return { type: intent.type, parameters: { proposal: intent.proposal } };
+      default:
+        return { type: intent.type };
+    }
+  }
+
+  private async addAssistantMessage(text: string, tone: SpeechTone = 'NORMAL') {
+    const state = this.customStore?.getState() ?? getStoreState();
+    const semantic = processSemanticResponse(text, state, this.getSettings().speechLanguage || 'vi-VN');
+    this.messages.push({
+      id: nextMessageId('asst'),
+      role: 'assistant',
+      content: text,
+      structuredCard: semantic.structuredCard,
+      spokenText: semantic.spokenText || text,
+      tone: semantic.tone || tone,
+      timestamp: Date.now(),
+      status: 'success',
+    });
+    this.messages = trimConversationHistory(this.messages, 15);
+    this.diagnostics.status = 'READY';
+    this.diagnostics.lastError = null;
+    this.diagnostics.lastTestedAt = Date.now();
+    this.emit();
+    await this.speakResponseIfNeeded(semantic.spokenText || text, semantic.tone || tone);
+  }
+
+  private async speakResponseIfNeeded(
+    spokenText: string | undefined,
+    tone: SpeechTone = 'NORMAL',
+    forceSpeak = false,
+  ): Promise<void> {
+    const text = spokenText?.trim();
+    if (!text) return;
+
+    const settings = this.getSettings();
+    if (settings.ttsMuted || aiSpeechService.isMuted) return;
+    if (!settings.voiceEnabled) return;
+
+    const isVoiceQuery = forceSpeak || this.currentQuerySource === 'voice';
+    const shouldSpeak = isVoiceQuery || settings.voiceRepliesEnabled;
+
+    if (!shouldSpeak) return;
+
+    try {
+      await aiSpeechService.speak(text, {
+        voice: settings.voiceIdentifier,
+        vietnameseVoice: settings.vietnameseVoiceIdentifier,
+        englishVoice: settings.englishVoiceIdentifier,
+        language: settings.speechLanguage || 'vi-VN',
+        rate: settings.speechRate || 0.95,
+        pitch: settings.speechPitch || 1.0,
+        volume: 1.0,
+        gender: settings.voiceGender,
+        tone,
+        style: settings.voiceStyle || 'COPILOT',
+      });
+    } catch (err) {
+      console.warn('[AiService] speakResponse error:', err);
     }
   }
 

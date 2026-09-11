@@ -252,14 +252,14 @@ export function HomeControlPanel({ phonePosition, onCenterHome, onOpenConfirmMod
 const styles = StyleSheet.create({
   wrapper: {
     position: 'absolute',
-    top: 166,
-    right: 14,
+    top: 172,
+    right: 38,
     zIndex: layers.controls,
     alignItems: 'flex-end',
   },
   wrapperCompact: {
-    top: 162,
-    right: 10,
+    top: 172,
+    right: 38,
   },
   buttonHit: {
     ...glassShadow,

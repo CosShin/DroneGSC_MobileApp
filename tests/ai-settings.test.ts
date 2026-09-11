@@ -27,9 +27,10 @@ test('settingsSlice initializes with DEFAULT_AI_CONFIG including fallback and vo
   assert.equal(ai.voiceEnabled, true);
   assert.equal(ai.voiceRepliesEnabled, true);
   assert.equal(ai.speechLanguage, 'vi-VN');
-  assert.equal(ai.speechRate, 1.0);
-  assert.equal(ai.speechPitch, 1.0);
+  assert.equal(ai.speechRate, 0.9);
+  assert.equal(ai.speechPitch, 0.8);
   assert.equal(ai.voiceIdentifier, null);
+  assert.equal(ai.voiceGender, 'MALE');
   assert.equal(ai.voiceProvider, 'SYSTEM_TTS');
   assert.equal(ai.elevenLabsVoiceId, null);
   assert.equal(ai.elevenLabsModelId, 'eleven_multilingual_v2');
@@ -120,8 +121,28 @@ test('settingsSlice hydrateSettings merges incoming AI configuration backwards-c
   assert.equal(ai.model, 'gemma4:31b-cloud');
   assert.equal(ai.enableFallback, false);
   assert.equal(ai.fallbackModel, 'qwen3.5:9b');
-  assert.equal(ai.speechPitch, 1.0);
+  assert.equal(ai.speechPitch, 0.8);
   assert.equal(ai.voiceIdentifier, null);
+  assert.equal(ai.voiceGender, 'MALE');
+});
+
+test('settings hydration upgrades only the legacy default voice to the deep male preset', () => {
+  const store = configureStore({ reducer: { settings: settingsReducer } });
+  store.dispatch(hydrateSettings({
+    ai: {
+      ...DEFAULT_AI_CONFIG,
+      speechRate: 1,
+      speechPitch: 1,
+      voiceGender: 'DEFAULT',
+      voiceIdentifier: null,
+      voiceStyle: 'COPILOT',
+    },
+  }));
+
+  const ai = selectAiSettings(store.getState());
+  assert.equal(ai.voiceGender, 'MALE');
+  assert.equal(ai.speechRate, 0.9);
+  assert.equal(ai.speechPitch, 0.8);
 });
 
 test('settings hydration deep-merges every persisted subsystem and marks startup ready', () => {

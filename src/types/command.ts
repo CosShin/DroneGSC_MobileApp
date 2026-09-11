@@ -78,5 +78,6 @@ export interface CommandResult {
   mavResult?: number;
   sentAt?: number;
   ackAt?: number;
+  retryCount?: number;
   error?: string;
 }

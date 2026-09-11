@@ -7,8 +7,10 @@ import { universalConnectionService } from '../../services/connection/UniversalC
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { glassShadow, layers, radius } from '../../theme/gcsTheme';
 import { DraggableFloatingControl } from './DraggableFloatingControl';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export function DiagnosticsOverlay() {
+  const insets = useSafeAreaInsets();
   const [visible, setVisible] = useState(false);
   const [lagMs, setLagMs] = useState(0);
   const [renderCount, setRenderCount] = useState(0);
@@ -33,7 +35,7 @@ export function DiagnosticsOverlay() {
   if (!visible) {
     return (
       <DraggableFloatingControl
-        initialPosition={{ x: 32, y: 152 }}
+        initialPosition={{ x: insets.left + 32, y: insets.top + 152 }}
         style={styles.floatingRoot}
         onPress={() => setVisible(true)}
       >
@@ -53,7 +55,7 @@ export function DiagnosticsOverlay() {
   const diag = universalConnectionService.getDiagnostics();
 
   return (
-    <DraggableFloatingControl initialPosition={{ x: 12, y: 152 }} style={styles.floatingRoot}>
+    <DraggableFloatingControl initialPosition={{ x: insets.left + 12, y: insets.top + 152 }} style={styles.floatingRoot}>
       <View style={styles.container}>
         <BlurView pointerEvents="none" tint="extraLight" intensity={72} experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined} style={StyleSheet.absoluteFill} />
         <View style={styles.headerRow}>

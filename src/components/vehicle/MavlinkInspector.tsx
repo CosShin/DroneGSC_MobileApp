@@ -91,12 +91,13 @@ export function MavlinkInspector() {
     [matches, snapshot.messages],
   );
   const packets = React.useMemo(
-    // Keep wire order stable. Prepending every live packet made all visible
-    // rows move on each inspector refresh and looked like the table was
-    // jumping. New packets now append at the bottom instead.
-    () => snapshot.packets.filter(matches),
-    [matches, snapshot.packets],
+    // Show the latest packet per message stream so existing rows stay in
+    // place and only their live values update. A new row appears only when
+    // a new message stream is first observed.
+    () => messages.map(message => message.latest),
+    [messages],
   );
+  const selectedPacketKey = selectedPacketSnapshot ? packetMessageKey(selectedPacketSnapshot) : null;
 
   // Auto-select first item when none selected in split view
   React.useEffect(() => {
@@ -104,18 +105,26 @@ export function MavlinkInspector() {
       if (!selectedMessageKey || !messages.some(m => m.key === selectedMessageKey)) {
         setSelectedMessageKey(messages[0].key);
       }
-    } else if (split && view === 'PACKETS' && packets.length > 0 && !selectedPacketSnapshot) {
-      setSelectedPacketSnapshot(packets[packets.length - 1]);
+    } else if (split && view === 'PACKETS' && packets.length > 0) {
+      if (!selectedPacketKey || !packets.some(packet => packetMessageKey(packet) === selectedPacketKey)) {
+        setSelectedPacketSnapshot(packets[0]);
+      }
     }
-  }, [split, view, messages, packets, selectedMessageKey, selectedPacketSnapshot]);
+  }, [split, view, messages, packets, selectedMessageKey, selectedPacketKey]);
 
   const selectedMessage = selectedMessageKey
     ? snapshot.messages.find(message => message.key === selectedMessageKey) ?? null
-    : (split && messages.length > 0 ? messages[0] : null);
+    : (split && view === 'MESSAGES' && messages.length > 0 ? messages[0] : null);
 
   const selectedPacket = view === 'MESSAGES'
     ? selectedMessage?.latest ?? null
-    : selectedPacketSnapshot ?? (split && packets.length > 0 ? packets[0] : null);
+    : selectedPacketKey
+      ? packets.find(packet => packetMessageKey(packet) === selectedPacketKey) ?? null
+      : (split && packets.length > 0 ? packets[0] : null);
+  const selectedPacketMessage = selectedPacket
+    ? snapshot.messages.find(message => message.key === packetMessageKey(selectedPacket)) ?? null
+    : null;
+  const detailMessage = view === 'MESSAGES' ? selectedMessage : selectedPacketMessage;
 
   const selectView = (next: InspectorView) => {
     setView(next);
@@ -235,8 +244,8 @@ export function MavlinkInspector() {
         {/* Left List Card */}
         <GlassSurface fill variant="strong" style={styles.listPanel} contentStyle={styles.listContent}>
           <View style={styles.tableTitleRow}>
-            <Text style={styles.tableTitle}>{view === 'MESSAGES' ? 'MESSAGE STREAMS (QGC LIVE)' : 'RAW PACKETS'}</Text>
-            <Text style={styles.tableCount}>{view === 'MESSAGES' ? messages.length : packets.length} {view === 'MESSAGES' ? 'TYPES' : 'PACKETS'}</Text>
+            <Text style={styles.tableTitle}>{view === 'MESSAGES' ? 'MESSAGE STREAMS (QGC LIVE)' : 'LATEST PACKETS'}</Text>
+            <Text style={styles.tableCount}>{view === 'MESSAGES' ? messages.length : packets.length} TYPES</Text>
           </View>
           {view === 'MESSAGES' ? (
             <View style={styles.tableContainer}>
@@ -268,13 +277,13 @@ export function MavlinkInspector() {
               <PacketTableHeader />
               <FlatList
                 data={packets}
-                keyExtractor={item => item.id}
+                keyExtractor={packetMessageKey}
                 style={styles.flatList}
                 maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
                 renderItem={({ item }) => (
                   <PacketRow
                     packet={item}
-                    selected={selectedPacketSnapshot?.id === item.id}
+                    selected={selectedPacket ? packetMessageKey(selectedPacket) === packetMessageKey(item) : false}
                     onSelect={selectPacket}
                   />
                 )}
@@ -294,7 +303,7 @@ export function MavlinkInspector() {
           selectedPacket ? (
             <PacketDetail
               packet={selectedPacket}
-              message={selectedMessage}
+              message={detailMessage}
               view={detailView}
               paused={paused}
               onView={setDetailView}
@@ -314,7 +323,7 @@ export function MavlinkInspector() {
         <View style={styles.detailOverlay}>
           <PacketDetail
             packet={selectedPacket}
-            message={selectedMessage}
+            message={detailMessage}
             view={detailView}
             paused={paused}
             onView={setDetailView}
@@ -327,6 +336,10 @@ export function MavlinkInspector() {
       ) : null}
     </View>
   );
+}
+
+function packetMessageKey(packet: InspectorPacket) {
+  return `${packet.direction}:${packet.systemId}:${packet.componentId}:${packet.messageId}`;
 }
 
 function MessageTableHeader() {

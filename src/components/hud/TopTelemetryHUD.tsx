@@ -1,20 +1,25 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppSelector } from '../../store/hooks';
-import { selectConnectionStatus, selectMavlinkState, selectVehicleState } from '../../store/connection/connectionSlice';
+import {
+  selectConnectionStatus,
+  selectControlStatus,
+  selectMavlinkStatus,
+  selectVehicleStatus,
+} from '../../store/connection/connectionSlice';
 import { selectBattery, selectGps, selectTelemetryStale } from '../../store/telemetry/telemetrySlice';
 import { glassShadow, layers } from '../../theme/gcsTheme';
 import { useGcsLayout } from '../../hooks/useGcsLayout';
 import { GlassSurface } from '../gcs/GlassSurface';
 import { FlyViewModeSwitcher } from '../flight/FlyViewModeSwitcher';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { selectHomePosition, selectHomeStatus } from '../../store/home/homeSlice';
 import { calculateBearingDegrees, calculateDistanceMeters, formatDistance, isValidCoordinate } from '../../utils/geographic';
 import { useFreshnessClock } from '../../hooks/useFreshnessClock';
-
-const GPS_FRESH_MS = 5_000;
-const BATTERY_FRESH_MS = 30_000;
+import { LinkQualityIndicator } from './LinkQualityIndicator';
+import { FRESHNESS_THRESHOLDS } from '../../config/TelemetryFreshness';
 
 type Tone = 'neutral' | 'success' | 'primary' | 'danger' | 'warning';
 
@@ -51,29 +56,37 @@ const StatusPill = React.memo(function StatusPill({ icon, value, tone = 'neutral
 
 export const TopTelemetryHUD = React.memo(function TopTelemetryHUD({
   showFlightViewSwitcher = false,
+  onOpenSettings,
 }: {
   showFlightViewSwitcher?: boolean;
   onOpenAi?: () => void;
+  onOpenSettings?: () => void;
 }) {
   const layout = useGcsLayout();
+  const insets = useSafeAreaInsets();
   const now = useFreshnessClock();
   const compact = showFlightViewSwitcher || layout.isCompactLandscape || layout.contentWidth < 900;
+  const topOffset = insets.top + (layout.isCompactLandscape ? 8 : 10);
+  const leftGroupEnd = insets.left + (layout.isCompactLandscape ? 314 : 330);
+  const statusMaxWidth = Math.max(300, layout.screenWidth - leftGroupEnd - insets.right - 20);
 
   const connection = useAppSelector(selectConnectionStatus);
-  const vehicle = useAppSelector(selectVehicleState);
-  const mavlink = useAppSelector(selectMavlinkState);
-  const connected = connection === 'CONNECTED' && vehicle === 'CONNECTED';
+  const vehicle = useAppSelector(selectVehicleStatus);
+  const mavlink = useAppSelector(selectMavlinkStatus);
+  const control = useAppSelector(selectControlStatus);
+  const connected = connection === 'CONNECTED' && vehicle === 'AVAILABLE' && mavlink === 'HEARTBEAT_OK';
   const telemetryStale = useAppSelector(selectTelemetryStale);
   const telemetryLive = connected && !telemetryStale;
-  const waiting = connection === 'CONNECTING' || mavlink === 'WAITING_HEARTBEAT';
-  const lost = vehicle === 'STALE' || mavlink === 'HEARTBEAT_LOST';
+  const waiting = connection === 'CONNECTING' || mavlink === 'WAITING';
+  const lost = vehicle === 'UNRESPONSIVE' || mavlink === 'LOST';
+  const degraded = control === 'DEGRADED' || mavlink === 'HEARTBEAT_STALE';
 
   const gps = useAppSelector(selectGps);
-  const gpsFresh = telemetryLive && !!gps && now - gps.timestamp <= GPS_FRESH_MS;
+  const gpsFresh = telemetryLive && !!gps && now - gps.timestamp <= FRESHNESS_THRESHOLDS.GPS_MS;
   const fixed = gpsFresh && (gps.value.gpsFix ?? 0) >= 3;
 
   const battery = useAppSelector(selectBattery);
-  const batteryPct = telemetryLive && battery && now - battery.timestamp <= BATTERY_FRESH_MS
+  const batteryPct = telemetryLive && battery && now - battery.timestamp <= FRESHNESS_THRESHOLDS.BATTERY_MS
     ? Math.round(battery.value.percentage)
     : null;
 
@@ -99,7 +112,11 @@ export const TopTelemetryHUD = React.memo(function TopTelemetryHUD({
       {showFlightViewSwitcher ? (
         <View
           pointerEvents="box-none"
-          style={[styles.flightSwitcherSlot, layout.isCompactLandscape && styles.flightSwitcherSlotCompact]}
+          style={[
+            styles.flightSwitcherSlot,
+            layout.isCompactLandscape && styles.flightSwitcherSlotCompact,
+            { top: topOffset, left: insets.left + (layout.isCompactLandscape ? 148 : 158) },
+          ]}
         >
           <FlyViewModeSwitcher compact />
         </View>
@@ -107,15 +124,21 @@ export const TopTelemetryHUD = React.memo(function TopTelemetryHUD({
 
       <View
         pointerEvents="box-none"
-        style={[styles.pillsRow, compact && styles.pillsRowCompact]}
+        style={[
+          styles.pillsRow,
+          compact && styles.pillsRowCompact,
+          { top: topOffset, right: insets.right - 16, maxWidth: statusMaxWidth },
+        ]}
       >
         {/* Connection Pill */}
         <StatusPill
           icon="access-point"
           compact={compact}
-          tone={connected ? 'success' : lost ? 'danger' : waiting ? 'warning' : 'neutral'}
-          value={connected ? 'Connected' : lost ? 'Link Lost' : waiting ? 'Waiting' : 'Offline'}
+          tone={connected ? 'success' : lost ? 'danger' : degraded || waiting ? 'warning' : 'neutral'}
+          value={connected ? 'Connected' : lost ? 'Link Lost' : degraded ? 'Degraded' : waiting ? 'Waiting' : 'Offline'}
         />
+
+        <LinkQualityIndicator compact={compact} />
 
         {/* GPS Pill */}
         <StatusPill
@@ -140,6 +163,23 @@ export const TopTelemetryHUD = React.memo(function TopTelemetryHUD({
           tone={batteryPct == null ? 'neutral' : batteryPct < 20 ? 'danger' : 'success'}
           value={batteryPct == null ? '--' : `${batteryPct}%`}
         />
+
+        {onOpenSettings ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Open settings"
+            activeOpacity={0.82}
+            onPress={onOpenSettings}
+          >
+            <GlassSurface
+              variant="strong"
+              style={[styles.settingsButton, compact && styles.settingsButtonCompact]}
+              contentStyle={styles.settingsButtonContent}
+            >
+              <MaterialCommunityIcons name="cog" size={compact ? 18 : 20} color="#64748B" />
+            </GlassSurface>
+          </TouchableOpacity>
+        ) : null}
       </View>
     </View>
   );
@@ -156,21 +196,21 @@ const styles = StyleSheet.create({
     right: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 7,
+    gap: 12,
   },
   pillsRowCompact: {
     top: 8,
     right: 10,
-    gap: 5,
+    gap: 10,
   },
   flightSwitcherSlot: {
     position: 'absolute',
     top: 10,
-    left: 200,
+    left: 158,
   },
   flightSwitcherSlotCompact: {
     top: 8,
-    left: 184,
+    left: 148,
   },
   pill: {
     height: 34,
@@ -200,5 +240,22 @@ const styles = StyleSheet.create({
   },
   pillTextCompact: {
     fontSize: 9,
+  },
+  settingsButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.64)',
+    ...glassShadow,
+  },
+  settingsButtonCompact: {
+    width: 30,
+    height: 30,
+  },
+  settingsButtonContent: {
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

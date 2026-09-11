@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -12,8 +12,8 @@ import {
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useAppSelector } from '../../store/hooks';
-import { selectAiSettings } from '../../store/settings/settingsSlice';
+import { useAppDispatch, useAppSelector } from '../../store/hooks';
+import { selectAiSettings, setAiMuted } from '../../store/settings/settingsSlice';
 import { getModelMetadata } from '../../settings/defaults/ai';
 import { aiService, type AiServiceState } from '../../services/ai/AiService';
 import { speechRecognitionService, type SpeechRecognitionState } from '../../services/voice/SpeechRecognitionService';
@@ -39,16 +39,27 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
   onViewOnMap,
 }: Props) {
   const layout = useGcsLayout();
+  const dispatch = useAppDispatch();
   const aiSettings = useAppSelector(selectAiSettings);
+  const isMuted = Boolean(aiSettings.ttsMuted);
+
+  const handleToggleMute = React.useCallback(async () => {
+    const nextMuted = !isMuted;
+    dispatch(setAiMuted(nextMuted));
+    if (nextMuted) {
+      await aiSpeechService.mute();
+    } else {
+      aiSpeechService.unmute();
+    }
+  }, [dispatch, isMuted]);
 
   const [aiState, setAiState] = useState<AiServiceState>(aiService.getState());
   const [sttState, setSttState] = useState<SpeechRecognitionState>(speechRecognitionService.getState());
   const [isSpeaking, setIsSpeaking] = useState(aiSpeechService.isSpeaking);
   const [voiceStatus, setVoiceStatus] = useState<VoiceProviderStatus>(aiSpeechService.getProviderStatus());
   const [inputText, setInputText] = useState('');
-  const [isMinimized, setIsMinimized] = useState(false);
-
-  const lastSpokenMsgIdRef = useRef<string | null>(null);
+  const voiceCaptureActiveRef = React.useRef(false);
+  const voiceTranscriptSubmittedRef = React.useRef(false);
 
   useEffect(() => {
     const unsubAi = aiService.subscribe(setAiState);
@@ -68,13 +79,13 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
   // Cleanup on close
   useEffect(() => {
     if (!visible) {
+      voiceCaptureActiveRef.current = false;
       void aiSpeechService.stop();
       speechRecognitionService.cancelListening();
-      setIsMinimized(false);
     }
   }, [visible]);
 
-  // Voice reply trigger when AI message arrives (decoupled spoken response)
+  // Voice provider configuration is shared with the floating ANI experience.
   useEffect(() => {
     if ((aiSettings.voiceProvider || 'SYSTEM_TTS') === 'ELEVENLABS') {
       aiSpeechService.configureNeuralVoice({
@@ -99,66 +110,14 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
     aiSettings.speechLanguage,
   ]);
 
-  useEffect(() => {
-    if (!aiSettings.voiceRepliesEnabled || !visible) return;
-
-    const msgs = aiState.messages;
-    if (msgs.length === 0) return;
-
-    const lastMsg = msgs[msgs.length - 1];
-    if (
-      lastMsg.role === 'assistant' &&
-      lastMsg.status === 'success' &&
-      lastMsg.id !== lastSpokenMsgIdRef.current &&
-      lastMsg.content.trim() &&
-      !lastMsg.content.startsWith('Xin chào!')
-    ) {
-      lastSpokenMsgIdRef.current = lastMsg.id;
-      // Use decoupled spoken text with deterministic tone and voice style
-      const textToSpeak = lastMsg.spokenText || lastMsg.content;
-      void aiSpeechService.speak(textToSpeak, {
-        voice: aiSettings.voiceIdentifier,
-        language: aiSettings.speechLanguage || 'vi-VN',
-        rate: aiSettings.speechRate || 1.0,
-        pitch: aiSettings.speechPitch || 1.0,
-        gender: aiSettings.voiceGender,
-        tone: lastMsg.tone || 'NORMAL',
-        style: aiSettings.voiceStyle || 'COPILOT',
-      });
-    }
-  }, [
-    aiState.messages,
-    aiSettings.voiceRepliesEnabled,
-    aiSettings.speechLanguage,
-    aiSettings.speechRate,
-    aiSettings.speechPitch,
-    aiSettings.voiceIdentifier,
-    aiSettings.voiceGender,
-    aiSettings.voiceStyle,
-    visible,
-  ]);
-
   if (!visible) return null;
-
-  // Minimized mode: renders floating animated mascot that restores panel on tap
-  if (isMinimized) {
-    return (
-      <View style={styles.minimizedContainer} pointerEvents="box-none">
-        <AnimatedAiMascot
-          size={38}
-          onPress={() => setIsMinimized(false)}
-          showStatusDot={true}
-        />
-      </View>
-    );
-  }
 
   const handleSend = () => {
     const text = inputText.trim();
     if (!text || aiState.isThinking) return;
     setInputText('');
     Keyboard.dismiss();
-    void aiService.sendUserMessage(text);
+    void aiService.sendUserMessage(text, { source: 'text' });
   };
 
   const handleQuickAction = (type: any) => {
@@ -172,22 +131,40 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
     }
   };
 
-  const handlePressInMic = async () => {
+  const submitVoiceTranscript = React.useCallback((rawTranscript: string) => {
+    const transcript = rawTranscript.trim();
+    if (!transcript || voiceTranscriptSubmittedRef.current) return;
+    voiceTranscriptSubmittedRef.current = true;
+    voiceCaptureActiveRef.current = false;
+    setInputText('');
+    void aiService.sendUserMessage(transcript, { source: 'voice' });
+  }, []);
+
+  useEffect(() => {
+    if (!voiceCaptureActiveRef.current) return;
+    if (sttState.status === 'ERROR' || sttState.errorCode) {
+      voiceCaptureActiveRef.current = false;
+      return;
+    }
+    if (sttState.status !== 'IDLE') return;
+    const transcript = (sttState.transcript || sttState.interimTranscript).trim();
+    if (transcript) submitVoiceTranscript(transcript);
+  }, [sttState.interimTranscript, sttState.status, sttState.transcript, submitVoiceTranscript]);
+
+  const handleMicPress = async () => {
     if (aiState.isThinking) return;
     Keyboard.dismiss();
+    if (sttState.isRecognizing) {
+      await speechRecognitionService.stopListening();
+      return;
+    }
+    if (sttState.status === 'PROCESSING' || sttState.status === 'REQUESTING_PERMISSION') return;
     await aiSpeechService.stop();
+    voiceCaptureActiveRef.current = true;
+    voiceTranscriptSubmittedRef.current = false;
     await speechRecognitionService.startListening({
       lang: aiSettings.speechLanguage || 'vi-VN',
     });
-  };
-
-  const handlePressOutMic = async () => {
-    if (!sttState.isRecognizing) return;
-    const finalTranscript = await speechRecognitionService.stopListening();
-    if (finalTranscript && finalTranscript.trim()) {
-      setInputText('');
-      void aiService.sendUserMessage(finalTranscript.trim());
-    }
   };
 
   // Header data: Model · Status · Latency
@@ -231,7 +208,7 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
             style={StyleSheet.absoluteFill}
           />
 
-          {/* 1. Header: [ mascot ] ANITECH Copilot / Subtitle, Right: [min] [clear] [close] */}
+          {/* Optional full conversation history, opened by long-pressing floating ANI. */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <AnimatedAiMascot size={26} interactive={false} showStatusDot={false} />
@@ -244,14 +221,18 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
             </View>
 
             <View style={styles.headerActions}>
-              {/* Minimize button */}
+              {/* Speaker / Mute button */}
               <TouchableOpacity
                 accessibilityRole="button"
-                accessibilityLabel="Minimize panel"
-                style={styles.headerIconBtn}
-                onPress={() => setIsMinimized(true)}
+                accessibilityLabel={isMuted ? 'Bật âm thanh ANI (Voice OFF)' : 'Tắt tiếng ANI (Voice ON)'}
+                style={[styles.headerIconBtn, isMuted && styles.headerIconBtnMuted]}
+                onPress={handleToggleMute}
               >
-                <MaterialCommunityIcons name="window-minimize" size={13} color="#64748B" />
+                <MaterialCommunityIcons
+                  name={isMuted ? 'volume-variant-off' : 'volume-high'}
+                  size={14}
+                  color={isMuted ? '#EF4444' : '#2586EA'}
+                />
               </TouchableOpacity>
 
               {/* Clear chat button */}
@@ -309,10 +290,9 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
               {aiSettings.voiceEnabled ? (
                 <TouchableOpacity
                   accessibilityRole="button"
-                  accessibilityLabel="Hold to speak"
+                  accessibilityLabel={sttState.isRecognizing ? 'Stop listening' : 'Tap to speak'}
                   activeOpacity={0.75}
-                  onPressIn={handlePressInMic}
-                  onPressOut={handlePressOutMic}
+                  onPress={handleMicPress}
                   disabled={aiState.isThinking}
                   style={[
                     styles.micBtn,
@@ -321,7 +301,7 @@ export const FlightAssistantPanel = React.memo(function FlightAssistantPanel({
                   ]}
                 >
                   <MaterialCommunityIcons
-                    name={sttState.isRecognizing ? 'microphone' : 'microphone-outline'}
+                    name={sttState.isRecognizing ? 'stop' : 'microphone-outline'}
                     size={16}
                     color={sttState.isRecognizing ? '#FFFFFF' : '#2586EA'}
                   />
@@ -391,13 +371,6 @@ const styles = StyleSheet.create({
     position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
     backgroundColor: 'rgba(15, 25, 40, 0.15)',
   },
-  minimizedContainer: {
-    position: 'absolute',
-    bottom: 24,
-    left: 16,
-    zIndex: layers.modal,
-    elevation: layers.modal,
-  },
   panelWrapper: {
     position: 'absolute',
     top: 10,
@@ -466,6 +439,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.04)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  headerIconBtnMuted: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
   },
   messagesContainer: {
     flex: 1,

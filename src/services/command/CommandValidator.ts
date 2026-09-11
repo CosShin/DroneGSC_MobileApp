@@ -1,20 +1,25 @@
 import { DroneCommand } from '../../types/command';
 import { RootState } from '../../store';
 import { AppConfig } from '../../config';
+import { FRESHNESS_THRESHOLDS } from '../../config/TelemetryFreshness';
 import { isValidCoordinate } from '../../utils/geographic';
 
 export class CommandValidator {
   validate(command: DroneCommand, state: RootState): string | null {
     const { connection, drone, telemetry, command: commandState } = state;
 
-    if (connection.status !== 'CONNECTED' || connection.vehicleState !== 'CONNECTED') return 'NO_FRESH_VEHICLE';
+    if (connection.status !== 'CONNECTED' || !connection.controlAvailable || connection.vehicleStatus !== 'AVAILABLE') {
+      return 'NO_FRESH_VEHICLE';
+    }
     if (telemetry.stale || drone.stale) return 'TELEMETRY_STALE';
 
     // 2. Heartbeat check (timeout handled by heartbeat service, which sets status to ERROR/DISCONNECTED, 
     // but we can double check if it's stale just in case)
     const now = Date.now();
-    if (!connection.lastHeartbeat) return 'WAITING_HEARTBEAT';
-    if (now - connection.lastHeartbeat > AppConfig.CONNECTION_TIMEOUT) return 'HEARTBEAT_TIMEOUT';
+    if (!connection.lastHeartbeatAt) return 'WAITING_HEARTBEAT';
+    if (connection.controlStatus === 'LOST' || now - connection.lastHeartbeatAt > AppConfig.CONNECTION_TIMEOUT) {
+      return 'HEARTBEAT_TIMEOUT';
+    }
     if (commandState.pendingCommand) return 'COMMAND_ALREADY_PENDING';
 
     // 3. Command rules
@@ -28,7 +33,7 @@ export class CommandValidator {
         if (!telemetry.gps || !Number.isFinite(telemetry.gps.value.altitude)) {
           return 'DISARM_REQUIRES_VALID_ALTITUDE';
         }
-        if (now - telemetry.gps.timestamp > AppConfig.TELEMETRY_TIMEOUT) return 'ALTITUDE_STALE';
+        if (now - telemetry.gps.timestamp > FRESHNESS_THRESHOLDS.GPS_MS) return 'ALTITUDE_STALE';
         if (telemetry.gps.value.altitude > 1) return 'DISARM_BLOCKED_VEHICLE_AIRBORNE';
         break;
 
@@ -45,7 +50,7 @@ export class CommandValidator {
         break;
 
       case 'RTL':
-        if (!telemetry.gps || now - telemetry.gps.timestamp > AppConfig.TELEMETRY_TIMEOUT) return 'GPS_STALE';
+        if (!telemetry.gps || now - telemetry.gps.timestamp > FRESHNESS_THRESHOLDS.GPS_MS) return 'GPS_STALE';
         if (telemetry.gps.value.gpsFix === null || telemetry.gps.value.gpsFix < 3) return 'GPS_NO_3D_FIX';
         break;
 
@@ -59,7 +64,7 @@ export class CommandValidator {
             || !isValidCoordinate(telemetry.gps.value.latitude, telemetry.gps.value.longitude)) {
             return 'SET_HOME_REQUIRES_VALID_VEHICLE_POSITION';
           }
-          if (now - telemetry.gps.timestamp > AppConfig.TELEMETRY_TIMEOUT) return 'GPS_STALE';
+          if (now - telemetry.gps.timestamp > FRESHNESS_THRESHOLDS.GPS_MS) return 'GPS_STALE';
           if ((telemetry.gps.value.gpsFix ?? 0) < 3) return 'GPS_NO_3D_FIX';
         } else if (!isValidCoordinate(command.payload.latitude, command.payload.longitude)
           || command.payload.altitude == null

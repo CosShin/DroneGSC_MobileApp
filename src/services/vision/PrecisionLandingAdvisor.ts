@@ -13,17 +13,29 @@ export class PrecisionLandingAdvisor {
     targetFound: false,
     timestamp: Date.now(),
   };
+  private listeners = new Set<(state: PrecisionLandingTargetState) => void>();
 
   updateTargetState(state: Partial<PrecisionLandingTargetState>) {
+    const timestamp = typeof state.timestamp === 'number' ? state.timestamp : Date.now();
     this.lastState = {
       ...this.lastState,
       ...state,
-      timestamp: Date.now(),
+      timestamp,
     };
+    const next = this.getTargetState();
+    this.listeners.forEach(listener => listener(next));
   }
 
   getTargetState(): PrecisionLandingTargetState {
     return { ...this.lastState };
+  }
+
+  subscribe(listener: (state: PrecisionLandingTargetState) => void) {
+    this.listeners.add(listener);
+    listener(this.getTargetState());
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   /**

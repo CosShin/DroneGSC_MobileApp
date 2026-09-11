@@ -63,10 +63,10 @@ class SafetyLayer {
     const { connection, drone } = state;
 
     if (!intent.deadmanActive && !intent.finalNeutral) return false;
-    if (connection.status !== 'CONNECTED' || connection.vehicleState !== 'CONNECTED') return false;
+    if (connection.status !== 'CONNECTED' || !connection.controlAvailable || connection.vehicleStatus !== 'AVAILABLE') return false;
     if (!drone.armed || drone.stale) return false;
     if (!this.joystickModes.has(drone.flightMode)) return false;
-    universalConnectionService.sendPilotControl(input).catch(error => {
+    universalConnectionService.sendPilotControl(input, { finalNeutral: intent.finalNeutral }).catch(error => {
       console.warn('[MAVLink] MANUAL_CONTROL send failed', error);
     });
     return true;

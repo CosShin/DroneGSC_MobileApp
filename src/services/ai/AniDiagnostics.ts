@@ -54,13 +54,13 @@ export function evaluateSystemHealth(snapshot: AniToolSnapshot): DiagnosticRow[]
   return [
     {
       label: 'Vehicle',
-      state: ctx.vehicle.connected ? 'PASS' : ctx.connection.mavlinkState === 'ACTIVE' ? 'WARNING' : 'NO DATA',
+      state: ctx.vehicle.connected ? 'PASS' : ctx.connection.mavlinkState === 'HEARTBEAT_STALE' ? 'WARNING' : 'NO DATA',
       value: ctx.vehicle.connected ? `${ctx.vehicle.mode}` : ctx.connection.vehicleState,
       detail: ctx.vehicle.connected ? undefined : 'No fresh vehicle heartbeat confirmed.',
     },
     {
       label: 'MAVLink',
-      state: ctx.connection.mavlinkState === 'ACTIVE' && (heartbeatAge == null || heartbeatAge < 2000) ? 'PASS' : ctx.connection.mavlinkState === 'HEARTBEAT_LOST' ? 'FAIL' : 'WARNING',
+      state: ctx.connection.mavlinkState === 'HEARTBEAT_OK' && (heartbeatAge == null || heartbeatAge < 2000) ? 'PASS' : ctx.connection.mavlinkState === 'LOST' ? 'FAIL' : 'WARNING',
       value: `RX ${ctx.mavlink.rxPps} pps, HB ${fmt(heartbeatAge, ' ms')}`,
     },
     {
@@ -126,23 +126,76 @@ export function buildWhatsHappening(snapshot: AniToolSnapshot): AniDeterministic
     { label: 'Altitude', state: ctx.flight.altitude != null ? 'PASS' : 'NO DATA', value: fmt(ctx.flight.altitude, ' m') },
     { label: 'Battery', state: ctx.battery?.percentage == null ? 'NO DATA' : ctx.battery.percentage < 30 ? 'WARNING' : 'PASS', value: ctx.battery?.percentage == null ? '--' : `${ctx.battery.percentage}%` },
     { label: 'GPS', state: ctx.gps?.fixType == null ? 'NO DATA' : ctx.gps.fixType >= 3 ? 'PASS' : 'WARNING', value: `${gpsLabel(ctx.gps?.fixType)}${ctx.gps?.satellites != null ? `, ${ctx.gps.satellites} sats` : ''}` },
-    { label: 'Link', state: ctx.connection.vehicleState === 'CONNECTED' ? 'PASS' : ctx.connection.mavlinkState === 'HEARTBEAT_LOST' ? 'FAIL' : 'WARNING', value: `${ctx.connection.mavlinkState}, HB ${fmt(ctx.connection.heartbeatAgeMs, ' ms')}` },
+    { label: 'Link', state: ctx.connection.vehicleState === 'AVAILABLE' ? 'PASS' : ctx.connection.mavlinkState === 'LOST' ? 'FAIL' : 'WARNING', value: `${ctx.connection.mavlinkState}, HB ${fmt(ctx.connection.heartbeatAgeMs, ' ms')}` },
     { label: 'Video', state: snapshot.video.status === 'LIVE' ? 'PASS' : snapshot.video.status === 'ERROR' ? 'FAIL' : 'NO DATA', value: snapshot.video.status },
   ];
   const hasWarnings = rows.some(r => r.state === 'WARNING' || r.state === 'FAIL');
-  const summary = ctx.vehicle.connected
-    ? `Drone đang ở ${ctx.vehicle.mode}. Pin ${ctx.battery?.percentage != null ? `${ctx.battery.percentage}%` : 'chưa có dữ liệu'}, GPS ${gpsLabel(ctx.gps?.fixType)}, heartbeat ${fmt(ctx.connection.heartbeatAgeMs, ' ms')}.`
-    : 'Hiện chưa có heartbeat vehicle tươi, nên ANI không thể xác nhận trạng thái bay hiện tại.';
+
+  let summary = '';
+  if (!ctx.vehicle.connected) {
+    summary = ctx.connection.networkState === 'CONNECTED'
+      ? 'App đang có kết nối mạng nhưng chưa nhận được MAVLink heartbeat từ drone.'
+      : 'Hiện chưa có heartbeat vehicle tươi, nên ANI không thể xác nhận trạng thái bay hiện tại.';
+  } else {
+    const batteryText = ctx.battery?.percentage != null ? `Pin ${ctx.battery.percentage}%.` : 'Chưa nhận được dữ liệu battery.';
+    const gpsText = ctx.gps == null || !ctx.gps.available
+      ? 'Chưa nhận dữ liệu GPS.'
+      : (ctx.gps.fixType ?? 0) < 3
+      ? `GPS chưa fix (${ctx.gps.satellites ?? 0} vệ tinh).`
+      : `GPS đã fix 3D (${ctx.gps.satellites ?? 0} vệ tinh).`;
+    summary = `Drone đang ở ${ctx.vehicle.mode}. ${batteryText} ${gpsText} Heartbeat ${fmt(ctx.connection.heartbeatAgeMs, ' ms')}.`;
+  }
+
   const card = buildCard('FLIGHT_STATUS', "WHAT'S HAPPENING", rows, summary, hasWarnings ? 'CAUTION' : 'INFORMATIVE');
   return finish(summary, card, card.tone ?? 'INFORMATIVE');
 }
 
 export function buildHealthCheck(snapshot: AniToolSnapshot): AniDeterministicResponse {
+  const ctx = snapshot.flightContext;
   const rows = evaluateSystemHealth(snapshot);
   const issues = rows.filter(r => r.state === 'FAIL' || r.state === 'WARNING');
-  const noData = rows.filter(r => r.state === 'NO DATA');
   const tone: SpeechTone = issues.some(r => r.state === 'FAIL') ? 'URGENT' : issues.length ? 'CAUTION' : 'POSITIVE';
-  const summary = `${issues.length} issue(s), ${noData.length} unavailable metric(s). ${issues.length ? 'Không đạt READY.' : 'Các mục có dữ liệu đều ổn.'}`;
+
+  let summary = '';
+  if (!ctx.vehicle.connected) {
+    summary = ctx.connection.networkState === 'CONNECTED'
+      ? 'App đang có kết nối mạng nhưng chưa nhận được MAVLink heartbeat từ drone.'
+      : 'Hiện chưa có kết nối MAVLink tới drone.';
+  } else {
+    const parts: string[] = ['Hiện tại nhận được telemetry từ drone:'];
+    // GPS
+    if (ctx.gps == null || !ctx.gps.available) {
+      parts.push('GPS: chưa nhận được dữ liệu.');
+    } else if ((ctx.gps.fixType ?? 0) < 3) {
+      parts.push(`GPS: chưa fix, ${ctx.gps.satellites ?? 0} vệ tinh.`);
+    } else {
+      parts.push(`GPS: đã fix 3D (${ctx.gps.satellites ?? 0} vệ tinh, tốt).`);
+    }
+    // Battery
+    if (ctx.battery?.percentage != null) {
+      parts.push(`Battery: ${ctx.battery.percentage}%.`);
+    } else {
+      parts.push('Battery: chưa nhận được dữ liệu.');
+    }
+    // Mode
+    parts.push(`Flight mode: ${ctx.vehicle.mode}.`);
+    // MAVLink
+    parts.push(`MAVLink: đang kết nối (HB ${fmt(ctx.connection.heartbeatAgeMs, ' ms')}).`);
+
+    // Additional sensor info
+    const unconfirmedSensors: string[] = [];
+    if (!ctx.ekf?.available) unconfirmedSensors.push('EKF');
+    const hasImu = ctx.sensors.some(s => /imu|accel|gyro/i.test(s.name));
+    if (!hasImu) unconfirmedSensors.push('IMU');
+    const hasCompass = ctx.sensors.some(s => /compass|mag/i.test(s.name));
+    if (!hasCompass) unconfirmedSensors.push('Compass');
+
+    if (unconfirmedSensors.length > 0) {
+      parts.push(`Tôi chưa nhận được dữ liệu đủ để xác nhận trạng thái ${unconfirmedSensors.join('/')}.`);
+    }
+    summary = parts.join('\n');
+  }
+
   const card = buildCard('SYSTEM_HEALTH', 'ANI HEALTH CHECK', rows, summary, tone);
   return finish(`ANI HEALTH CHECK\n${summary}`, card, tone);
 }
@@ -178,11 +231,11 @@ export function buildArmDiagnostics(snapshot: AniToolSnapshot): AniDeterministic
 export function buildConnectionDoctor(snapshot: AniToolSnapshot): AniDeterministicResponse {
   const ctx = snapshot.flightContext;
   const rows: DiagnosticRow[] = [
-    { label: 'Network', state: ctx.connection.networkState === 'BOUND' ? 'PASS' : ctx.connection.networkState === 'ERROR' ? 'FAIL' : 'WARNING', value: ctx.connection.networkState },
+    { label: 'Network', state: ctx.connection.networkState === 'CONNECTED' ? 'PASS' : ctx.connection.networkState === 'DISCONNECTED' ? 'FAIL' : 'WARNING', value: ctx.connection.networkState },
     { label: 'Transport', state: ctx.connection.transport ? 'PASS' : 'NO DATA', value: `${ctx.connection.transport} ${ctx.connection.portInfo}` },
     { label: 'MAVLink RX', state: ctx.mavlink.rxPps > 0 ? 'PASS' : 'WARNING', value: `${ctx.mavlink.rxPps} pps` },
     { label: 'Parser CRC', state: ctx.mavlink.crcErrors > 0 ? 'WARNING' : 'PASS', value: `${ctx.mavlink.crcErrors} CRC errors` },
-    { label: 'Heartbeat', state: ctx.connection.mavlinkState === 'ACTIVE' ? 'PASS' : ctx.connection.mavlinkState === 'HEARTBEAT_LOST' ? 'FAIL' : 'WARNING', value: fmt(ctx.connection.heartbeatAgeMs, ' ms') },
+    { label: 'Heartbeat', state: ctx.connection.mavlinkState === 'HEARTBEAT_OK' ? 'PASS' : ctx.connection.mavlinkState === 'LOST' ? 'FAIL' : 'WARNING', value: fmt(ctx.connection.heartbeatAgeMs, ' ms') },
     { label: 'Vehicle', state: ctx.vehicle.connected ? 'PASS' : 'FAIL', value: ctx.connection.vehicleState },
     { label: 'Video', state: snapshot.video.status === 'LIVE' ? 'PASS' : snapshot.video.status === 'ERROR' ? 'FAIL' : 'NO DATA', value: snapshot.video.status },
   ];

@@ -270,7 +270,7 @@ export class AiIntentParser {
   private getProposalDisplayInfo(intent: AiIntentParameters): { title: string; description: string } {
     switch (intent.type) {
       case 'ARM':
-        return { title: 'ARM VEHICLE', description: 'Kích hoạt động cơ máy bay. Đảm bảo khu vực cánh quạt an toàn.' };
+        return { title: 'ARM AIRCRAFT', description: 'Kích hoạt động cơ máy bay. Đảm bảo khu vực cánh quạt an toàn.' };
       case 'DISARM':
         return { title: 'DISARM VEHICLE', description: 'Tắt động cơ máy bay. Chỉ thực hiện khi đã tiếp đất an toàn.' };
       case 'TAKEOFF':

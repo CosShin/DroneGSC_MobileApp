@@ -9,6 +9,7 @@ import {
 import {
   setStatus, setHeartbeat, setLatency, updateTrafficStats, setDetectedVehicle,
   setLinkState, setPacketsLost, setActiveConnectionInfo,
+  updateConnectionHealth, setVehicleSessionId,
 } from '../store/connection/connectionSlice';
 import {
   updateBattery, clearBattery, updateSensors, updateTelemetrySnapshot,
@@ -20,12 +21,18 @@ import { setHomePosition, clearHomePosition } from '../store/home/homeSlice';
 import { isValidCoordinate } from '../utils/geographic';
 import { aiFlightSupervisor } from '../services/ai/supervisor/AiFlightSupervisor';
 import { store } from '../store';
+import { networkMonitor } from '../services/connection/NetworkMonitor';
+import { joystickProcessor } from '../services/joystick/JoystickProcessor';
+import { selectVideoRuntime } from '../store/videoSlice';
+import { invalidateMissionSession } from '../store/mission/missionSlice';
+import { aiService } from '../services/ai/AiService';
 
 export function ConnectionManager() {
   const dispatch = useAppDispatch();
   const connectionConfig = useAppSelector(selectConnectionConfig);
   const mavlinkSettings = useAppSelector(selectMavlinkSettings);
   const settingsHydrated = useAppSelector(selectSettingsHydrated);
+  const videoRuntime = useAppSelector(selectVideoRuntime);
   const autoConnectStarted = useRef(false);
 
   useEffect(() => {
@@ -43,9 +50,13 @@ export function ConnectionManager() {
         dispatch(setDroneStale(true));
       } else if (status === 'DISCONNECTED') {
         lastHomeUpdatedAt = 0;
+        joystickProcessor.invalidateControlSession();
+        aiService.cancelCurrentRequest();
         dispatch(clearTelemetry());
         dispatch(clearCommandState());
         dispatch(clearHomePosition());
+        dispatch(invalidateMissionSession());
+        dispatch(setVehicleSessionId(null));
         dispatch(setArmed(false));
         dispatch(setFlightMode('UNKNOWN'));
         dispatch(setDroneStale(false));
@@ -64,6 +75,26 @@ export function ConnectionManager() {
     const unsubscribeLink = universalConnectionService.onLinkState(link => {
       dispatch(setLinkState(link));
     });
+
+    let controlWasAvailable = false;
+    const unsubscribeHealth = universalConnectionService.onHealth(health => {
+      dispatch(updateConnectionHealth(health));
+      dispatch(setVehicleSessionId(
+        health.vehicleStatus === 'AVAILABLE' ? String(universalConnectionService.getMavlinkSessionId()) : null,
+      ));
+      if (controlWasAvailable && !health.controlAvailable) joystickProcessor.invalidateControlSession();
+      controlWasAvailable = health.controlAvailable;
+    });
+
+    const unsubscribeNetwork = networkMonitor.onChange((snapshot, previous) => {
+      universalConnectionService.handleNetworkChange(snapshot, previous);
+    });
+    const unsubscribeForeground = networkMonitor.onForeground(() => {
+      joystickProcessor.invalidateControlSession();
+      universalConnectionService.validateConnectionOnForeground();
+    });
+    networkMonitor.start();
+    universalConnectionService.handleNetworkChange(networkMonitor.getSnapshot());
 
     let lastSlowTick = 0;
     let lastUiTick = 0;
@@ -94,11 +125,11 @@ export function ConnectionManager() {
           attitude: data.roll !== null && data.pitch !== null && data.yaw !== null
             ? { roll: data.roll, pitch: data.pitch, yaw: data.yaw }
             : null,
-          gps: data.latitude !== null && data.longitude !== null && data.altitude !== null
+          gps: (data.latitude !== null && data.longitude !== null && data.altitude !== null) || data.gpsFix !== null || data.satellites !== null
             ? {
-                latitude: data.latitude,
-                longitude: data.longitude,
-                altitude: data.altitude,
+                latitude: data.latitude ?? 0,
+                longitude: data.longitude ?? 0,
+                altitude: data.altitude ?? 0,
                 altitudeMsl: data.altitudeMsl,
                 relativeAltitude: data.relativeAltitude,
                 satellites: data.satellites,
@@ -176,6 +207,10 @@ export function ConnectionManager() {
       aiFlightSupervisor.stop();
       unsubscribeStatus();
       unsubscribeLink();
+      unsubscribeHealth();
+      unsubscribeNetwork();
+      unsubscribeForeground();
+      networkMonitor.stop();
       unsubscribeTelemetry();
       unsubscribeHeartbeat();
       unsubscribeAck();
@@ -183,6 +218,10 @@ export function ConnectionManager() {
       universalConnectionService.disconnect();
     };
   }, [dispatch]);
+
+  useEffect(() => {
+    universalConnectionService.setVideoAvailable(videoRuntime.status === 'LIVE');
+  }, [videoRuntime.status]);
 
   useEffect(() => {
     if (!settingsHydrated || autoConnectStarted.current) return;

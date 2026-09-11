@@ -51,7 +51,7 @@ export class AiFlightSupervisor {
 
   evaluateTelemetry(state: RootState) {
     const { connection, drone, telemetry, home } = state;
-    if (connection.status !== 'CONNECTED' || connection.vehicleState !== 'CONNECTED') {
+    if (connection.status !== 'CONNECTED' || !connection.controlAvailable || connection.vehicleStatus !== 'AVAILABLE') {
       return;
     }
     if (drone.stale || telemetry.stale) return;

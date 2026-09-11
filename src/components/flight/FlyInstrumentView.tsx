@@ -7,6 +7,7 @@ import {
   selectGroundSpeed, selectVerticalSpeed, selectHeading, selectTelemetryStale,
 } from '../../store/telemetry/telemetrySlice';
 import { selectPacketsPerSec, selectConnectionStatus, selectVehicleState } from '../../store/connection/connectionSlice';
+import { useTruthfulTelemetry } from '../../hooks/useTruthfulTelemetry';
 import { useGcsLayout } from '../../hooks/useGcsLayout';
 import { glassShadow } from '../../theme/gcsTheme';
 
@@ -37,7 +38,8 @@ export const FlyInstrumentView = React.memo(function FlyInstrumentView() {
 
   const horizonSize = indicatorSize * 4;
 
-  const isConnected = connectionStatus === 'CONNECTED' && vehicleState === 'CONNECTED';
+  const truth = useTruthfulTelemetry();
+  const isConnected = truth.connected;
   const telemetryLive = isConnected && !telemetryStale;
   const attitudeLive = telemetryLive && roll != null && pitch != null;
   const displayRoll = attitudeLive ? roll : 0;

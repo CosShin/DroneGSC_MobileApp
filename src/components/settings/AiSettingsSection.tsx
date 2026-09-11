@@ -26,6 +26,8 @@ export function AiSettingsSection() {
   const [aiState, setAiState] = useState<AiServiceState>(aiService.getState());
   const [testing, setTesting] = useState(false);
   const [deviceVoices, setDeviceVoices] = useState<SpeechVoice[]>([]);
+  const [viVoices, setViVoices] = useState<SpeechVoice[]>([]);
+  const [enVoices, setEnVoices] = useState<SpeechVoice[]>([]);
 
   useEffect(() => {
     return aiService.subscribe(setAiState);
@@ -33,9 +35,15 @@ export function AiSettingsSection() {
 
   useEffect(() => {
     let isMounted = true;
-    aiSpeechService.getAvailableVoices(settings.speechLanguage).then(voices => {
+    Promise.all([
+      aiSpeechService.getAvailableVoices('vi'),
+      aiSpeechService.getAvailableVoices('en'),
+      aiSpeechService.getAvailableVoices(settings.speechLanguage),
+    ]).then(([vi, en, current]) => {
       if (isMounted) {
-        setDeviceVoices(voices);
+        setViVoices(vi);
+        setEnVoices(en);
+        setDeviceVoices(current);
       }
     });
     return () => {
@@ -72,7 +80,7 @@ export function AiSettingsSection() {
   const statusTone: 'success' | 'warning' | 'danger' | 'neutral' = 
     status === 'READY' ? 'success' : status === 'CONNECTING' ? 'warning' : status === 'ERROR' ? 'danger' : 'neutral';
 
-  const rateOptions = [0.8, 0.9, 1.0, 1.1, 1.2];
+  const rateOptions = [0.8, 0.9, 0.95, 1.0, 1.1, 1.2];
   const pitchOptions = [
     { label: 'Thấp (Low)', value: 0.8 },
     { label: 'Chuẩn (Normal)', value: 1.0 },
@@ -331,6 +339,72 @@ export function AiSettingsSection() {
           />
         </View>
 
+        {/* Mute Voice Switch */}
+        <View style={styles.row}>
+          <View style={styles.copy}>
+            <Text style={styles.label}>Tắt tiếng ANI (Mute Voice Output)</Text>
+            <Text style={styles.hint}>Tắt âm thanh giọng đọc TTS nhưng AI vẫn hiển thị câu trả lời dạng văn bản</Text>
+          </View>
+          <Switch
+            value={settings.ttsMuted ?? false}
+            onValueChange={ttsMuted => {
+              dispatch(updateAiSettings({ ttsMuted }));
+              if (ttsMuted) {
+                void aiSpeechService.mute();
+              } else {
+                aiSpeechService.unmute();
+              }
+            }}
+            trackColor={{ false: '#CBD5E1', true: '#FCA5A5' }}
+            thumbColor={(settings.ttsMuted ?? false) ? '#EF4444' : '#F8FAFC'}
+          />
+        </View>
+
+        {/* Voice Send Mode Selector (AUTO vs CONFIRM) */}
+        <View style={styles.fieldRow}>
+          <Text style={styles.fieldLabel}>Chế độ gửi giọng nói (Voice Send Mode)</Text>
+          <View style={styles.segmentedRow}>
+            <TouchableOpacity
+              style={[
+                styles.segmentBtn,
+                (settings.voiceSendMode || 'AUTO') === 'AUTO' && styles.segmentBtnSelected,
+              ]}
+              onPress={() => dispatch(updateAiSettings({ voiceSendMode: 'AUTO' }))}
+            >
+              <Text
+                style={[
+                  styles.segmentBtnText,
+                  (settings.voiceSendMode || 'AUTO') === 'AUTO' && styles.segmentBtnTextSelected,
+                ]}
+              >
+                🚀 Tự động gửi (Auto)
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.segmentBtn,
+                settings.voiceSendMode === 'CONFIRM' && styles.segmentBtnSelected,
+              ]}
+              onPress={() => dispatch(updateAiSettings({ voiceSendMode: 'CONFIRM' }))}
+            >
+              <Text
+                style={[
+                  styles.segmentBtnText,
+                  settings.voiceSendMode === 'CONFIRM' && styles.segmentBtnTextSelected,
+                ]}
+              >
+                ✋ Xác nhận (Confirm)
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.fieldSubHint}>
+            {(settings.voiceSendMode || 'AUTO') === 'AUTO'
+              ? 'Tự động gửi câu hỏi đến AI ngay sau khi phi công dừng nói.'
+              : 'Hiển thị câu hỏi để phi công kiểm tra/sửa hoặc bấm "Nói lại" trước khi gửi.'}
+          </Text>
+        </View>
+
         <View style={styles.fieldRow}>
           <Text style={styles.fieldLabel}>Voice Provider</Text>
           <View style={styles.segmentedRow}>
@@ -486,7 +560,8 @@ export function AiSettingsSection() {
                 dispatch(updateAiSettings({
                   voiceGender: 'MALE',
                   speechPitch: 0.8, // Deep resonant male copilot voice
-                  voiceIdentifier: maleVoice ? maleVoice.identifier : settings.voiceIdentifier,
+                  speechRate: 0.9,
+                  voiceIdentifier: maleVoice ? maleVoice.identifier : null,
                 }));
               }}
             >
@@ -496,7 +571,7 @@ export function AiSettingsSection() {
                   settings.voiceGender === 'MALE' && styles.segmentBtnTextSelected,
                 ]}
               >
-                👨 Giọng Nam
+                Giọng nam trầm
               </Text>
             </TouchableOpacity>
 
@@ -510,7 +585,7 @@ export function AiSettingsSection() {
                 dispatch(updateAiSettings({
                   voiceGender: 'FEMALE',
                   speechPitch: 1.0,
-                  voiceIdentifier: femaleVoice ? femaleVoice.identifier : settings.voiceIdentifier,
+                  voiceIdentifier: femaleVoice ? femaleVoice.identifier : null,
                 }));
               }}
             >
@@ -548,35 +623,35 @@ export function AiSettingsSection() {
           </View>
         </View>
 
-        {/* Device Voice Selector */}
+        {/* Vietnamese Voice Selector */}
         <View style={styles.fieldRow}>
-          <Text style={styles.fieldLabel}>Device TTS Voice</Text>
+          <Text style={styles.fieldLabel}>Giọng Tiếng Việt (Vietnamese Voice - vi-VN)</Text>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.voiceScrollRow}
           >
-            {/* Default OS Voice option */}
+            {/* Auto selection */}
             <TouchableOpacity
               style={[
                 styles.voiceChip,
-                settings.voiceIdentifier === null && styles.voiceChipSelected,
+                settings.vietnameseVoiceIdentifier === null && styles.voiceChipSelected,
               ]}
-              onPress={() => dispatch(updateAiSettings({ voiceIdentifier: null }))}
+              onPress={() => dispatch(updateAiSettings({ vietnameseVoiceIdentifier: null }))}
             >
               <Text
                 style={[
                   styles.voiceChipText,
-                  settings.voiceIdentifier === null && styles.voiceChipTextSelected,
+                  settings.vietnameseVoiceIdentifier === null && styles.voiceChipTextSelected,
                 ]}
               >
-                Hệ thống mặc định (Default)
+                ⚙️ Tự động tối ưu (Auto)
               </Text>
             </TouchableOpacity>
 
-            {/* Real device voices */}
-            {deviceVoices.map(v => {
-              const isSelected = settings.voiceIdentifier === v.identifier;
+            {/* Real device Vietnamese voices */}
+            {viVoices.map(v => {
+              const isSelected = settings.vietnameseVoiceIdentifier === v.identifier;
               const isEnhanced = v.quality === 'Enhanced';
 
               return (
@@ -587,10 +662,7 @@ export function AiSettingsSection() {
                     isSelected && styles.voiceChipSelected,
                   ]}
                   onPress={() => {
-                    const updates: any = { voiceIdentifier: v.identifier };
-                    if (v.gender === 'MALE') updates.voiceGender = 'MALE';
-                    else if (v.gender === 'FEMALE') updates.voiceGender = 'FEMALE';
-                    dispatch(updateAiSettings(updates));
+                    dispatch(updateAiSettings({ vietnameseVoiceIdentifier: v.identifier }));
                   }}
                 >
                   <Text
@@ -619,9 +691,84 @@ export function AiSettingsSection() {
               );
             })}
           </ScrollView>
-          {deviceVoices.length === 0 ? (
+          {viVoices.length === 0 ? (
             <Text style={styles.fieldSubHint}>
-              Đang sử dụng bộ đọc mặc định của hệ thống thiết bị.
+              Đang sử dụng bộ đọc tiếng Việt mặc định của hệ thống thiết bị.
+            </Text>
+          ) : null}
+        </View>
+
+        {/* English Voice Selector */}
+        <View style={styles.fieldRow}>
+          <Text style={styles.fieldLabel}>Giọng Tiếng Anh & Thuật ngữ Drone (English Voice - en-US)</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.voiceScrollRow}
+          >
+            {/* Auto selection */}
+            <TouchableOpacity
+              style={[
+                styles.voiceChip,
+                settings.englishVoiceIdentifier === null && styles.voiceChipSelected,
+              ]}
+              onPress={() => dispatch(updateAiSettings({ englishVoiceIdentifier: null }))}
+            >
+              <Text
+                style={[
+                  styles.voiceChipText,
+                  settings.englishVoiceIdentifier === null && styles.voiceChipTextSelected,
+                ]}
+              >
+                ⚙️ Tự động tối ưu (Auto)
+              </Text>
+            </TouchableOpacity>
+
+            {/* Real device English voices */}
+            {enVoices.map(v => {
+              const isSelected = settings.englishVoiceIdentifier === v.identifier;
+              const isEnhanced = v.quality === 'Enhanced';
+
+              return (
+                <TouchableOpacity
+                  key={v.identifier}
+                  style={[
+                    styles.voiceChip,
+                    isSelected && styles.voiceChipSelected,
+                  ]}
+                  onPress={() => {
+                    dispatch(updateAiSettings({ englishVoiceIdentifier: v.identifier }));
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.voiceChipText,
+                      isSelected && styles.voiceChipTextSelected,
+                    ]}
+                  >
+                    {v.name}
+                  </Text>
+                  {v.gender === 'MALE' ? (
+                    <View style={styles.maleBadge}>
+                      <Text style={styles.maleBadgeText}>👨 Nam</Text>
+                    </View>
+                  ) : v.gender === 'FEMALE' ? (
+                    <View style={styles.femaleBadge}>
+                      <Text style={styles.femaleBadgeText}>👩 Nữ</Text>
+                    </View>
+                  ) : null}
+                  {isEnhanced ? (
+                    <View style={styles.enhancedBadge}>
+                      <Text style={styles.enhancedBadgeText}>★ Enhanced</Text>
+                    </View>
+                  ) : null}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          {enVoices.length === 0 ? (
+            <Text style={styles.fieldSubHint}>
+              Đang sử dụng bộ đọc tiếng Anh mặc định của hệ thống thiết bị.
             </Text>
           ) : null}
         </View>
@@ -706,28 +853,83 @@ export function AiSettingsSection() {
 
         {/* Test Speech Audio */}
         <View style={styles.buttonRow}>
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel="Test Voice Audio"
-            style={[styles.testBtn, styles.testVoiceBtn]}
-            onPress={() => {
-              const testPhrase = settings.speechLanguage === 'vi-VN'
-                ? 'Xin chào, tôi là trợ lý bay ANITECH.'
-                : 'Hello, I am ANITECH flight copilot.';
-              void aiSpeechService.speak(testPhrase, {
-                voice: settings.voiceIdentifier,
-                language: settings.speechLanguage,
-                rate: settings.speechRate,
-                pitch: settings.speechPitch,
-                gender: settings.voiceGender,
-                style: settings.voiceStyle || 'COPILOT',
-                tone: 'INFORMATIVE',
-              });
-            }}
-          >
-            <MaterialCommunityIcons name="volume-high" size={16} color="#2586EA" />
-            <Text style={[styles.testBtnText, { color: '#2586EA' }]}>TEST VOICE</Text>
-          </TouchableOpacity>
+          <Text style={[styles.fieldLabel, { marginBottom: 8 }]}>Kiểm tra giọng nói (Voice Diagnostics)</Text>
+          <View style={{ gap: 8 }}>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Test Vietnamese Voice"
+                style={[styles.testBtn, styles.testVoiceBtn, { flex: 1 }]}
+                onPress={() => {
+                  console.log('[ANI:TTS] Testing Vietnamese voice');
+                  const testPhrase = 'Xin chào, tôi là trợ lý bay ANI. Hệ thống máy bay đã sẵn sàng.';
+                  void aiSpeechService.speak(testPhrase, {
+                    voice: settings.vietnameseVoiceIdentifier || settings.voiceIdentifier,
+                    vietnameseVoice: settings.vietnameseVoiceIdentifier,
+                    language: 'vi-VN',
+                    rate: settings.speechRate,
+                    pitch: settings.speechPitch,
+                    volume: 1.0,
+                    gender: settings.voiceGender,
+                    style: settings.voiceStyle || 'COPILOT',
+                    tone: 'POSITIVE',
+                  });
+                }}
+              >
+                <MaterialCommunityIcons name="volume-high" size={15} color="#2586EA" />
+                <Text style={[styles.testBtnText, { color: '#2586EA', fontSize: 11 }]}>TEST VIETNAMESE</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Test English Voice"
+                style={[styles.testBtn, styles.testVoiceBtn, { flex: 1 }]}
+                onPress={() => {
+                  console.log('[ANI:TTS] Testing English voice');
+                  const testPhrase = 'Hello, I am ANI flight assistant. Drone systems are normal.';
+                  void aiSpeechService.speak(testPhrase, {
+                    voice: settings.englishVoiceIdentifier,
+                    englishVoice: settings.englishVoiceIdentifier,
+                    language: 'en-US',
+                    rate: settings.speechRate,
+                    pitch: settings.speechPitch,
+                    volume: 1.0,
+                    gender: settings.voiceGender,
+                    style: settings.voiceStyle || 'COPILOT',
+                    tone: 'POSITIVE',
+                  });
+                }}
+              >
+                <MaterialCommunityIcons name="volume-high" size={15} color="#2586EA" />
+                <Text style={[styles.testBtnText, { color: '#2586EA', fontSize: 11 }]}>TEST ENGLISH</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Test Mixed Voice Audio"
+              style={[styles.testBtn, styles.testVoiceBtn]}
+              onPress={() => {
+                console.log('[ANI:TTS] Testing mixed voice');
+                const testPhrase = 'Pin còn 74%. GPS signal is stable. Drone đang ở LOITER ở độ cao 5.2 mét.';
+                void aiSpeechService.speak(testPhrase, {
+                  voice: settings.voiceIdentifier,
+                  vietnameseVoice: settings.vietnameseVoiceIdentifier,
+                  englishVoice: settings.englishVoiceIdentifier,
+                  language: settings.speechLanguage,
+                  rate: settings.speechRate,
+                  pitch: settings.speechPitch,
+                  volume: 1.0,
+                  gender: settings.voiceGender,
+                  style: settings.voiceStyle || 'COPILOT',
+                  tone: 'INFORMATIVE',
+                });
+              }}
+            >
+              <MaterialCommunityIcons name="translate" size={15} color="#2586EA" />
+              <Text style={[styles.testBtnText, { color: '#2586EA', fontSize: 11 }]}>TEST MIXED VOICE (VI & EN)</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Panel>
 

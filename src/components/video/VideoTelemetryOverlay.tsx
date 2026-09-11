@@ -8,10 +8,7 @@ import { calculateDistanceMeters, formatDistance, isValidCoordinate } from '../.
 import { glass, glassShadow, radius } from '../../theme/gcsTheme';
 import { useTruthfulTelemetry } from '../../hooks/useTruthfulTelemetry';
 import { useFreshnessClock } from '../../hooks/useFreshnessClock';
-
-const GPS_FRESH_MS = 5_000;
-const VELOCITY_FRESH_MS = 3_000;
-const BATTERY_FRESH_MS = 30_000;
+import { FRESHNESS_THRESHOLDS } from '../../config/TelemetryFreshness';
 
 export const VideoTelemetryOverlay = React.memo(function VideoTelemetryOverlay() {
   const mode = useAppSelector(selectDroneMode);
@@ -22,9 +19,9 @@ export const VideoTelemetryOverlay = React.memo(function VideoTelemetryOverlay()
   const home = useAppSelector(selectHomePosition);
   const truth = useTruthfulTelemetry();
   const now = useFreshnessClock();
-  const gpsFresh = truth.connected && !!gps && now - gps.timestamp <= GPS_FRESH_MS;
-  const velocityFresh = truth.connected && !!velocity && now - velocity.timestamp <= VELOCITY_FRESH_MS;
-  const batteryFresh = truth.connected && !!battery && now - battery.timestamp <= BATTERY_FRESH_MS;
+  const gpsFresh = truth.connected && !!gps && now - gps.timestamp <= FRESHNESS_THRESHOLDS.GPS_MS;
+  const velocityFresh = truth.connected && !!velocity && now - velocity.timestamp <= FRESHNESS_THRESHOLDS.VELOCITY_MS;
+  const batteryFresh = truth.connected && !!battery && now - battery.timestamp <= FRESHNESS_THRESHOLDS.BATTERY_MS;
   const gpsFix = gpsFresh ? gps.value.gpsFix : null;
 
   const homeDistance = home

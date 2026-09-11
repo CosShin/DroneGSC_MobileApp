@@ -30,6 +30,8 @@ export interface AiSettings {
   speechRate: number;
   speechPitch: number;
   voiceIdentifier: string | null;
+  vietnameseVoiceIdentifier?: string | null;
+  englishVoiceIdentifier?: string | null;
   voiceGender?: 'DEFAULT' | 'MALE' | 'FEMALE';
   voiceStyle?: 'NATURAL' | 'COPILOT' | 'CALM';
   voiceProvider?: AiVoiceProviderType;
@@ -38,6 +40,8 @@ export interface AiSettings {
   neuralVoiceLanguage?: 'vi-VN' | 'en-US';
   neuralVoiceTimeoutMs?: number;
   neuralVoiceProxyUrl?: string | null;
+  ttsMuted?: boolean;
+  voiceSendMode?: 'AUTO' | 'CONFIRM';
 }
 
 export interface AiDiagnosticsState {

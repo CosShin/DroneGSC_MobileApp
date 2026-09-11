@@ -9,6 +9,10 @@ function buildSupervisorState(overrides: Partial<any> = {}): RootState {
       status: 'CONNECTED',
       vehicleState: 'CONNECTED',
       lastHeartbeat: Date.now(),
+      lastHeartbeatAt: Date.now(),
+      vehicleStatus: 'AVAILABLE',
+      controlStatus: 'READY',
+      controlAvailable: true,
     },
     drone: {
       armed: true,

@@ -10,6 +10,10 @@ function buildMockState(overrides: Partial<any> = {}): RootState {
       status: 'CONNECTED',
       vehicleState: 'CONNECTED',
       lastHeartbeat: Date.now(),
+      lastHeartbeatAt: Date.now(),
+      vehicleStatus: 'AVAILABLE',
+      controlStatus: 'READY',
+      controlAvailable: true,
       sessionId: 'session-100',
     },
     drone: {
@@ -154,7 +158,7 @@ test('AiActionValidator allows DISARM when vehicle is landed on the ground (alti
 
 test('AiActionValidator blocks actions when vehicle is disconnected or session has expired', () => {
   // 1. Disconnected
-  const disconnectedState = buildMockState({ connection: { status: 'DISCONNECTED', vehicleState: 'NO_VEHICLE' } });
+  const disconnectedState = buildMockState({ connection: { status: 'DISCONNECTED', vehicleState: 'NO_VEHICLE', vehicleStatus: 'NO_VEHICLE', controlAvailable: false } });
   const proposal: AiActionProposal = {
     id: 'prop-arm',
     intent: { type: 'ARM' },

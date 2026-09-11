@@ -23,7 +23,7 @@ export function NativeUdpVideoPlayer({ port, lowLatency = true }: { port: number
   }, []);
 
   return <View style={styles.container}>
-    <VLCPlayer ref={playerRef} style={StyleSheet.absoluteFill} source={source as any} autoplay paused={false} muted autoAspectRatio resizeMode="cover" playInBackground={false} onPlaying={() => setStatus('LIVE · UDP H.264')} onBuffering={() => setStatus('Buffering RTP/H.264')} onError={() => setStatus(`Cannot decode RTP/H.264 on UDP ${port}`)}/>
+    <VLCPlayer ref={playerRef} style={StyleSheet.absoluteFill} source={source as any} autoplay paused={false} muted autoAspectRatio resizeMode="contain" playInBackground={false} onPlaying={() => setStatus('LIVE · UDP H.264')} onBuffering={() => setStatus('Buffering RTP/H.264')} onError={() => setStatus(`Cannot decode RTP/H.264 on UDP ${port}`)}/>
     <Text style={styles.status}>{status}</Text>
   </View>;
 }

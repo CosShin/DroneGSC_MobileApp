@@ -5,7 +5,10 @@ import telemetryReducer, { updateTelemetrySnapshot } from '../src/store/telemetr
 
 test('DISARM is blocked when altitude is unavailable', () => {
   const state = {
-    connection: { status: 'CONNECTED', vehicleState: 'CONNECTED', lastHeartbeat: Date.now() },
+    connection: {
+      status: 'CONNECTED', vehicleState: 'CONNECTED', lastHeartbeat: Date.now(),
+      lastHeartbeatAt: Date.now(), vehicleStatus: 'AVAILABLE', controlStatus: 'READY', controlAvailable: true,
+    },
     drone: { armed: true, stale: false, flightMode: 'STABILIZE' },
     telemetry: { stale: false, gps: null },
     command: { pendingCommand: null },

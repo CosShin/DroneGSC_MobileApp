@@ -11,17 +11,22 @@ import {
   Animated,
 } from 'react-native';
 
-interface Position {
+export interface FloatingControlPosition {
   x: number;
   y: number;
 }
 
 interface Props {
-  initialPosition: Position;
+  initialPosition: FloatingControlPosition;
+  position?: FloatingControlPosition;
   children: React.ReactNode;
   style?: ViewStyle;
   onPress?: () => void;
+  onLongPress?: () => void;
+  onPositionChange?: (position: FloatingControlPosition) => void;
+  onDragEnd?: (position: FloatingControlPosition) => void;
   tapSlop?: number;
+  longPressDelayMs?: number;
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -30,30 +35,73 @@ function clamp(value: number, min: number, max: number) {
 
 export function DraggableFloatingControl({
   initialPosition,
+  position: controlledPosition,
   children,
   style,
   onPress,
+  onLongPress,
+  onPositionChange,
+  onDragEnd,
   tapSlop = 7,
+  longPressDelayMs = 550,
 }: Props) {
   const { width, height } = useWindowDimensions();
   const [position, setPosition] = React.useState(initialPosition);
   const [size, setSize] = React.useState({ width: 56, height: 56 });
+  const positionRef = React.useRef(initialPosition);
   const startRef = React.useRef(initialPosition);
   const movedRef = React.useRef(false);
-  const ownsTouch = Boolean(onPress);
+  const longPressTriggeredRef = React.useRef(false);
+  const longPressTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ownsTouch = Boolean(onPress || onLongPress);
+  const renderedPosition = controlledPosition ?? position;
+  positionRef.current = renderedPosition;
 
-  const clampPosition = React.useCallback((next: Position) => ({
+  const clampPosition = React.useCallback((next: FloatingControlPosition) => ({
     x: clamp(next.x, 0, Math.max(0, width - size.width)),
     y: clamp(next.y, 0, Math.max(0, height - size.height)),
   }), [height, size.height, size.width, width]);
 
+  const clampPositionRef = React.useRef(clampPosition);
+  const onPressRef = React.useRef(onPress);
+  const onLongPressRef = React.useRef(onLongPress);
+  const onPositionChangeRef = React.useRef(onPositionChange);
+  const onDragEndRef = React.useRef(onDragEnd);
+  const ownsTouchRef = React.useRef(ownsTouch);
+  const tapSlopRef = React.useRef(tapSlop);
+  const longPressDelayRef = React.useRef(longPressDelayMs);
+
+  clampPositionRef.current = clampPosition;
+  onPressRef.current = onPress;
+  onLongPressRef.current = onLongPress;
+  onPositionChangeRef.current = onPositionChange;
+  onDragEndRef.current = onDragEnd;
+  ownsTouchRef.current = ownsTouch;
+  tapSlopRef.current = tapSlop;
+  longPressDelayRef.current = longPressDelayMs;
+
+  const clearLongPressTimer = React.useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const updatePosition = React.useCallback((next: FloatingControlPosition) => {
+    const clamped = clampPositionRef.current(next);
+    positionRef.current = clamped;
+    setPosition(clamped);
+    onPositionChangeRef.current?.(clamped);
+    return clamped;
+  }, []);
+
   React.useEffect(() => {
-    setPosition(current => clampPosition(current));
-  }, [clampPosition]);
+    updatePosition(positionRef.current);
+  }, [clampPosition, updatePosition]);
 
   const panResponder = React.useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => ownsTouch,
-    onStartShouldSetPanResponderCapture: () => ownsTouch,
+    onStartShouldSetPanResponder: () => ownsTouchRef.current,
+    onStartShouldSetPanResponderCapture: () => ownsTouchRef.current,
     onMoveShouldSetPanResponder: (_event: GestureResponderEvent, gesture: PanResponderGestureState) => (
       Math.abs(gesture.dx) > 6 || Math.abs(gesture.dy) > 6
     ),
@@ -61,35 +109,53 @@ export function DraggableFloatingControl({
       Math.abs(gesture.dx) > 6 || Math.abs(gesture.dy) > 6
     ),
     onPanResponderGrant: () => {
-      startRef.current = position;
+      startRef.current = positionRef.current;
       movedRef.current = false;
+      longPressTriggeredRef.current = false;
+      clearLongPressTimer();
+      if (onLongPressRef.current) {
+        longPressTimerRef.current = setTimeout(() => {
+          longPressTimerRef.current = null;
+          longPressTriggeredRef.current = true;
+          onLongPressRef.current?.();
+        }, longPressDelayRef.current);
+      }
     },
     onPanResponderMove: (_event, gesture) => {
-      if (Math.abs(gesture.dx) > tapSlop || Math.abs(gesture.dy) > tapSlop) {
+      if (Math.abs(gesture.dx) > tapSlopRef.current || Math.abs(gesture.dy) > tapSlopRef.current) {
         movedRef.current = true;
+        clearLongPressTimer();
       }
-      setPosition(clampPosition({
+      updatePosition({
         x: startRef.current.x + gesture.dx,
         y: startRef.current.y + gesture.dy,
-      }));
+      });
     },
     onPanResponderRelease: (_event, gesture) => {
-      setPosition(clampPosition({
+      clearLongPressTimer();
+      const finalPosition = updatePosition({
         x: startRef.current.x + gesture.dx,
         y: startRef.current.y + gesture.dy,
-      }));
-      if (!movedRef.current) {
-        onPress?.();
+      });
+      if (movedRef.current) {
+        onDragEndRef.current?.(finalPosition);
+      } else if (!longPressTriggeredRef.current) {
+        onPressRef.current?.();
       }
     },
     onPanResponderTerminate: (_event, gesture) => {
-      setPosition(clampPosition({
+      clearLongPressTimer();
+      const finalPosition = updatePosition({
         x: startRef.current.x + gesture.dx,
         y: startRef.current.y + gesture.dy,
-      }));
+      });
+      if (movedRef.current) onDragEndRef.current?.(finalPosition);
     },
-    onShouldBlockNativeResponder: () => false,
-  }), [clampPosition, onPress, ownsTouch, position, tapSlop]);
+    onPanResponderTerminationRequest: () => false,
+    onShouldBlockNativeResponder: () => true,
+  }), [clearLongPressTimer, updatePosition]);
+
+  React.useEffect(() => () => clearLongPressTimer(), [clearLongPressTimer]);
 
   const handleLayout = React.useCallback((event: LayoutChangeEvent) => {
     const nextSize = {
@@ -105,11 +171,11 @@ export function DraggableFloatingControl({
       onLayout={handleLayout}
       style={[
         styles.root,
-        {
-          left: position.x,
-          top: position.y,
-        },
         style,
+        {
+          top: renderedPosition.y,
+          left: renderedPosition.x,
+        },
       ]}
     >
       <View pointerEvents={ownsTouch ? 'none' : 'auto'}>

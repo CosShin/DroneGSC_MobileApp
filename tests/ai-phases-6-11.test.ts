@@ -73,7 +73,7 @@ test('PHASE 8: AiFlightSupervisor detects low battery in flight and emits RTL pr
   });
 
   const mockState: any = {
-    connection: { status: 'CONNECTED', vehicleState: 'CONNECTED' },
+    connection: { status: 'CONNECTED', vehicleState: 'CONNECTED', vehicleStatus: 'AVAILABLE', controlStatus: 'READY', controlAvailable: true },
     drone: { armed: true, flightMode: 'LOITER', stale: false },
     telemetry: {
       stale: false,
@@ -101,7 +101,7 @@ test('PHASE 8: AiFlightSupervisor detects GPS degradation in autonomous mode', (
   });
 
   const mockState: any = {
-    connection: { status: 'CONNECTED', vehicleState: 'CONNECTED' },
+    connection: { status: 'CONNECTED', vehicleState: 'CONNECTED', vehicleStatus: 'AVAILABLE', controlStatus: 'READY', controlAvailable: true },
     drone: { armed: true, flightMode: 'AUTO', stale: false },
     telemetry: {
       stale: false,

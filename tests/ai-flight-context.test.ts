@@ -11,10 +11,12 @@ import { DEFAULT_TELEMETRY_CONFIG } from '../src/settings/defaults/telemetry';
 import { DEFAULT_JOYSTICK_CONFIG } from '../src/settings/defaults/joystick';
 import { DEFAULT_AI_CONFIG } from '../src/settings/defaults/ai';
 import { MAV_CMD, MAV_FRAME } from '../src/services/mission/MissionCommandRegistry';
+import { emptyConnectionHealth } from '../src/services/connection/ConnectionHealth';
 
 function createMockRootState(overrides: Partial<RootState> = {}): RootState {
   return {
     connection: {
+      ...emptyConnectionHealth(),
       status: 'DISCONNECTED',
       activeType: 'WEBSOCKET',
       activePortInfo: 'ws://192.168.1.247:8765/mavlink',
@@ -37,6 +39,7 @@ function createMockRootState(overrides: Partial<RootState> = {}): RootState {
       mavlinkState: 'IDLE',
       vehicleState: 'NO_VEHICLE',
       packetsLost: 0,
+      sessionId: null,
     },
     drone: {
       armed: false,
@@ -131,6 +134,7 @@ test('FlightContextBuilder extracts real telemetry when vehicle is connected and
   const now = Date.now();
   const state = createMockRootState({
     connection: {
+      ...emptyConnectionHealth(),
       status: 'CONNECTED',
       activeType: 'WEBSOCKET',
       activePortInfo: 'ws://192.168.1.247:8765/mavlink',
@@ -153,6 +157,18 @@ test('FlightContextBuilder extracts real telemetry when vehicle is connected and
       mavlinkState: 'ACTIVE',
       vehicleState: 'CONNECTED',
       packetsLost: 2,
+      sessionId: 'session-1',
+      networkStatus: 'CONNECTED',
+      mavlinkStatus: 'HEARTBEAT_OK',
+      vehicleStatus: 'AVAILABLE',
+      controlStatus: 'READY',
+      controlAvailable: true,
+      linkQuality: 'GOOD',
+      linkQualityScore: 85,
+      lastHeartbeatAt: now - 150,
+      heartbeatAgeMs: 150,
+      transport: 'WEBSOCKET',
+      transportStatus: 'READY',
     },
     drone: {
       armed: true,
@@ -248,6 +264,7 @@ test('FlightContextBuilder includes active PreArm warnings and STATUSTEXT autopi
   const now = Date.now();
   const state = createMockRootState({
     connection: {
+      ...emptyConnectionHealth(),
       status: 'CONNECTED',
       activeType: 'UDP',
       activePortInfo: 'UDP 0.0.0.0:14550',
@@ -270,6 +287,18 @@ test('FlightContextBuilder includes active PreArm warnings and STATUSTEXT autopi
       mavlinkState: 'ACTIVE',
       vehicleState: 'CONNECTED',
       packetsLost: 0,
+      sessionId: 'session-2',
+      networkStatus: 'CONNECTED',
+      mavlinkStatus: 'HEARTBEAT_OK',
+      vehicleStatus: 'AVAILABLE',
+      controlStatus: 'READY',
+      controlAvailable: true,
+      linkQuality: 'GOOD',
+      linkQualityScore: 85,
+      lastHeartbeatAt: now - 200,
+      heartbeatAgeMs: 200,
+      transport: 'UDP',
+      transportStatus: 'READY',
     },
     telemetry: {
       gps: null, // No GPS fix
@@ -347,4 +376,222 @@ test('FlightContextBuilder summarizes mission waypoints and safety commands', ()
   assert.equal(context.mission.maxAltitudeMeters, 25);
   assert.ok(context.mission.totalDistanceMeters > 0);
   assert.equal(context.mission.speedChanges.length, 1);
+});
+
+test('TEST 1: GPS 0 SAT / NO FIX is not treated as missing data', () => {
+  const now = Date.now();
+  const state = createMockRootState({
+    connection: {
+      ...emptyConnectionHealth(),
+      status: 'CONNECTED',
+      networkStatus: 'CONNECTED',
+      mavlinkStatus: 'HEARTBEAT_OK',
+      vehicleStatus: 'AVAILABLE',
+      heartbeatAgeMs: 120,
+    },
+    drone: {
+      armed: false,
+      flightMode: 'LAND',
+      systemStatus: 'STANDBY',
+      stale: false,
+    },
+    telemetry: {
+      gps: {
+        timestamp: now - 50,
+        value: {
+          latitude: 0,
+          longitude: 0,
+          altitude: 0,
+          satellites: 0,
+          hdop: 99.9,
+          gpsFix: 0,
+        },
+      },
+      attitude: null,
+      velocity: null,
+      battery: {
+        timestamp: now - 50,
+        value: { voltage: 16.2, current: 0.8, percentage: 93 },
+      },
+      sensors: null,
+      stale: false,
+      statusTexts: [],
+    },
+  });
+
+  const context = buildFlightContext(state);
+  assert.equal(context.vehicle.connected, true);
+  assert.equal(context.battery?.percentage, 93);
+  assert.equal(context.gps?.available, true);
+  assert.equal(context.gps?.fix, false);
+  assert.equal(context.gps?.satellites, 0);
+  assert.equal(context.gps?.fixDescription, 'NO FIX');
+
+  const { buildWhatsHappening } = require('../src/services/ai/AniDiagnostics');
+  const { buildAniToolSnapshot } = require('../src/services/ai/AniToolbox');
+  const response = buildWhatsHappening(buildAniToolSnapshot(state));
+  assert.ok(response.content.includes('Pin 93%'));
+  assert.ok(response.content.includes('GPS chưa fix (0 vệ tinh)'));
+  assert.ok(!response.content.includes('chưa có heartbeat vehicle tươi'));
+});
+
+test('TEST 2: Network connected without heartbeat informs user network is ok but drone heartbeat is missing', () => {
+  const state = createMockRootState({
+    connection: {
+      ...emptyConnectionHealth(),
+      status: 'CONNECTED',
+      networkStatus: 'CONNECTED',
+      mavlinkStatus: 'WAITING',
+      vehicleStatus: 'NO_VEHICLE',
+      heartbeatAgeMs: null,
+    },
+  });
+
+  const { buildWhatsHappening } = require('../src/services/ai/AniDiagnostics');
+  const { buildAniToolSnapshot } = require('../src/services/ai/AniToolbox');
+  const response = buildWhatsHappening(buildAniToolSnapshot(state));
+  assert.ok(response.content.includes('App đang có kết nối mạng nhưng chưa nhận được MAVLink heartbeat từ drone.'));
+});
+
+test('TEST 3: Vehicle connected with battery missing reports only battery unavailable without dropping context', () => {
+  const now = Date.now();
+  const state = createMockRootState({
+    connection: {
+      ...emptyConnectionHealth(),
+      status: 'CONNECTED',
+      networkStatus: 'CONNECTED',
+      mavlinkStatus: 'HEARTBEAT_OK',
+      vehicleStatus: 'AVAILABLE',
+      heartbeatAgeMs: 90,
+    },
+    drone: {
+      armed: false,
+      flightMode: 'LOITER',
+      systemStatus: 'STANDBY',
+      stale: false,
+    },
+    telemetry: {
+      gps: null,
+      attitude: null,
+      velocity: null,
+      battery: null,
+      sensors: null,
+      stale: false,
+      statusTexts: [],
+    },
+  });
+
+  const context = buildFlightContext(state);
+  assert.equal(context.vehicle.connected, true);
+  assert.equal(context.battery, null);
+
+  const { buildWhatsHappening } = require('../src/services/ai/AniDiagnostics');
+  const { buildAniToolSnapshot } = require('../src/services/ai/AniToolbox');
+  const response = buildWhatsHappening(buildAniToolSnapshot(state));
+  assert.ok(response.content.includes('Chưa nhận được dữ liệu battery.'));
+  assert.ok(response.content.includes('Drone đang ở LOITER'));
+});
+
+test('TEST 4: GPS 12 satellites and 3D fix reports healthy', () => {
+  const now = Date.now();
+  const state = createMockRootState({
+    connection: {
+      ...emptyConnectionHealth(),
+      status: 'CONNECTED',
+      networkStatus: 'CONNECTED',
+      mavlinkStatus: 'HEARTBEAT_OK',
+      vehicleStatus: 'AVAILABLE',
+      heartbeatAgeMs: 80,
+    },
+    drone: {
+      armed: false,
+      flightMode: 'LOITER',
+      systemStatus: 'ACTIVE',
+      stale: false,
+    },
+    telemetry: {
+      gps: {
+        timestamp: now - 50,
+        value: {
+          latitude: 10.8231,
+          longitude: 106.6297,
+          altitude: 12.5,
+          satellites: 12,
+          hdop: 0.8,
+          gpsFix: 3,
+        },
+      },
+      attitude: null,
+      velocity: null,
+      battery: {
+        timestamp: now - 50,
+        value: { voltage: 16.5, current: 1.2, percentage: 88 },
+      },
+      sensors: null,
+      stale: false,
+      statusTexts: [],
+    },
+  });
+
+  const context = buildFlightContext(state);
+  assert.equal(context.gps?.available, true);
+  assert.equal(context.gps?.fix, true);
+  assert.equal(context.gps?.satellites, 12);
+  assert.equal(context.gps?.fixDescription, '3D FIX');
+
+  const { buildWhatsHappening } = require('../src/services/ai/AniDiagnostics');
+  const { buildAniToolSnapshot } = require('../src/services/ai/AniToolbox');
+  const response = buildWhatsHappening(buildAniToolSnapshot(state));
+  assert.ok(response.content.includes('GPS đã fix 3D (12 vệ tinh)'));
+});
+
+test('TEST 5: getFlightContextTool returns sanitized live telemetry from Redux state', () => {
+  const now = Date.now();
+  const state = createMockRootState({
+    connection: {
+      ...emptyConnectionHealth(),
+      status: 'CONNECTED',
+      networkStatus: 'CONNECTED',
+      mavlinkStatus: 'HEARTBEAT_OK',
+      vehicleStatus: 'AVAILABLE',
+      heartbeatAgeMs: 150,
+    },
+    drone: {
+      armed: false,
+      flightMode: 'LAND',
+      systemStatus: 'ACTIVE',
+      stale: false,
+    },
+    telemetry: {
+      gps: {
+        timestamp: now,
+        value: {
+          latitude: 0,
+          longitude: 0,
+          altitude: 0,
+          satellites: 0,
+          hdop: null,
+          gpsFix: 0,
+        },
+      },
+      attitude: null,
+      velocity: null,
+      battery: {
+        timestamp: now,
+        value: { voltage: 15.9, current: 0.5, percentage: 93 },
+      },
+      sensors: null,
+      stale: false,
+      statusTexts: [],
+    },
+  });
+
+  const { getFlightContextTool } = require('../src/services/ai/AniRealtimeTools');
+  const result = getFlightContextTool(state);
+  assert.equal(result.ok, true);
+  assert.equal(result.context.battery?.percentage, 93);
+  assert.equal(result.context.gps?.available, true);
+  assert.equal(result.context.gps?.fix, false);
+  assert.equal(result.context.gps?.satellites, 0);
+  assert.equal(result.context.gps?.fixDescription, 'NO FIX');
 });
